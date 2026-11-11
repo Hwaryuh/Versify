@@ -84,8 +84,8 @@ for (const [id, key] of [['deeplKey', 'deeplApiKey'], ['claudeKey', 'claudeApiKe
   });
 }
 
-// ── 번역 캐시 (서비스 워커가 'v2|...' 키로 저장. 'lyrics::' 는 v1 캐시) ──
-const isCacheKey = (k) => k.startsWith('v2|') || k.startsWith('lyrics::');
+// ── 번역 캐시 (서비스 워커가 'v2|...', 'v3|...' 처럼 엔진별 버전 키로 저장. 'lyrics::' 는 v1 캐시) ──
+const isCacheKey = (k) => /^v\d+\|/.test(k) || k.startsWith('lyrics::');
 
 async function cacheKeys() {
   return Object.keys(await chrome.storage.local.get(null)).filter(isCacheKey);

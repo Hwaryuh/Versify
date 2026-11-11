@@ -4,7 +4,8 @@ import { translateLines as claude } from '../translate/claude.js';
 import { isTranslatable, hasScriptCheck } from '../translate/style.js';
 import { t } from '../i18n.js';
 
-const CACHE_VERSION = 'v2';
+// 엔진별 번역 방식 버전. 올린 엔진의 캐시만 다시 번역한다 (deepl v3: 줄 묶음 번역)
+const CACHE_VERSION = { deepl: 'v3', claude: 'v2' };
 const DEFAULTS = {
   engine: 'deepl',
   claudeModel: 'claude-opus-5-5',
@@ -80,7 +81,7 @@ async function handle({ track, spotify, force }, tabId, settings) {
   const apiKey = engine === 'claude' ? settings.claudeApiKey : settings.deeplApiKey;
   if (!apiKey) return { error: 'NO_KEY', engine };
 
-  const cacheKey = [CACHE_VERSION, settings.targetLang, engine, engine === 'claude' ? settings.claudeModel : '',
+  const cacheKey = [CACHE_VERSION[engine], settings.targetLang, engine, engine === 'claude' ? settings.claudeModel : '',
     settings.register, track.title, track.artist, track.album].join('|');
 
   const translate = (lines) => (engine === 'claude' ? claude : deepl)(lines, {
@@ -114,8 +115,8 @@ async function handle({ track, spotify, force }, tabId, settings) {
   const lyrics = await resolveLyrics(track, spotify, settings.preferSpotify);
   if (!lyrics) return { error: 'NO_LYRICS' };
 
-  // 제목은 마지막 한 줄로 같이 보낸다 (요청 하나로 끝내고, 후렴과 같은 제목이면 같은 번역이 나옴)
-  const toSend = [...lyrics.lines, { startTimeMs: 0, text: track.title }];
+  // 제목은 마지막 한 줄로 같이 보낸다 (요청 하나로 끝낸다). standalone: 마지막 소절과 한 문장으로 묶지 않게
+  const toSend = [...lyrics.lines, { startTimeMs: 0, text: track.title, standalone: true }];
   // KO/JA 는 줄마다 문자로 판별한다 (섞인 영어 줄은 번역). 판별 못 하는 언어만 Spotify 언어로 곡 전체를 건너뜀
   const sameLang = !hasScriptCheck(settings.targetLang) &&
     !!lyrics.language && lyrics.language.toUpperCase() === settings.targetLang.split('-')[0];

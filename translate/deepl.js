@@ -2,6 +2,10 @@ import { isTranslatable, registerRule } from './style.js';
 import { t } from '../i18n.js';
 
 const MAX_TEXTS_PER_REQUEST = 50; // DeepL 제한
+const MAX_BLOCK_LINES = 8; // 실측으로 8줄 묶음은 줄 수가 맞았다. 더 길면 어긋날 위험이 커진다
+// 묶음 안의 줄 구분자. 줄바꿈은 custom_instructions 를 같이 보내면 DeepL 이 공백으로 합쳐 버려서 못 쓴다 (실측).
+const SEP = ' | ';
+const SEP_RE = /\s*[|｜]\s*/;
 const customInstructionsRejected = new Set(); // `${host}|${lang}` 단위로 기억
 
 function normalizeKey(apiKey) {
@@ -60,14 +64,47 @@ async function translateChunk(key, texts, base) {
   return out;
 }
 
+// 같은 text 는 한 번만 보낸다 (반복 후렴·같은 묶음)
+async function translateAll(key, texts, base) {
+  const unique = [...new Set(texts)];
+  const map = new Map();
+  for (let i = 0; i < unique.length; i += MAX_TEXTS_PER_REQUEST) {
+    const chunk = unique.slice(i, i + MAX_TEXTS_PER_REQUEST);
+    const out = await translateChunk(key, chunk, base);
+    chunk.forEach((t, j) => map.set(t, out[j]));
+  }
+  return map;
+}
+
+const oneLine = text => text.replace(/\s*[\r\n]+\s*/g, ' ').replace(/[|｜]/g, '/').trim();
+
+// 한 줄씩 따로 보내면 여러 줄에 걸친 문장이 끊겨 오역이 난다 ("it" 을 엉뚱한 명사로, 관계절 "Who ..." 를 의문문으로).
+// 이어지는 번역 대상 줄을 MAX_BLOCK_LINES 까지 묶어 줄 인덱스 목록으로 돌려준다.
+// 번역 안 하는 줄(♪, 빈 줄, 이미 대상 언어)과 standalone 줄(곡 제목)에서 끊는다.
+function toBlocks(lines, wanted) {
+  const runs = [];
+  let run = [];
+  const flush = () => { if (run.length) runs.push(run); run = []; };
+  lines.forEach((l, i) => {
+    if (!wanted(l.text)) return flush();
+    if (l.standalone) { flush(); runs.push([i]); return; }
+    run.push(i);
+  });
+  flush();
+  // 긴 묶음은 고르게 나눈다 (16 -> 8+8, 9 -> 5+4)
+  return runs.flatMap(r => {
+    const size = Math.ceil(r.length / Math.ceil(r.length / MAX_BLOCK_LINES));
+    return Array.from({ length: Math.ceil(r.length / size) }, (_, k) => r.slice(k * size, (k + 1) * size));
+  });
+}
+
 async function translateLines(lines, { targetLang = 'KO', register = 'casual', apiKey }) {
   const key = normalizeKey(apiKey);
 
-  // 반복되는 후렴은 한 번만 보내서 같은 번역을 재사용
   // 이미 대상 언어인 줄은 번역하지 않고 context 로만 쓴다
   const wanted = text => isTranslatable(text, targetLang);
-  const unique = [...new Set(lines.map(l => l.text).filter(wanted))];
-  if (!unique.length) return { translations: lines.map(() => ''), complete: true };
+  const blocks = toBlocks(lines, wanted);
+  if (!blocks.length) return { translations: lines.map(() => ''), complete: true };
 
   const base = {
     target_lang: targetLang,
@@ -77,18 +114,26 @@ async function translateLines(lines, { targetLang = 'KO', register = 'casual', a
     preserve_formatting: true,
     custom_instructions: [
       registerRule(targetLang, register),
-      'Each text is one line of the same song. Translate it as part of that song, consistent with the surrounding lines in the context.'
+      'Each text is one or more consecutive lines of the same song, separated by " | ". Keep every " | " separator and put exactly one translated line between separators, in the same order.'
     ]
   };
 
-  const map = new Map();
-  for (let i = 0; i < unique.length; i += MAX_TEXTS_PER_REQUEST) {
-    const chunk = unique.slice(i, i + MAX_TEXTS_PER_REQUEST);
-    const out = await translateChunk(key, chunk, base);
-    chunk.forEach((t, j) => map.set(t, out[j]));
+  const translations = lines.map(() => '');
+  const texts = blocks.map(b => b.map(i => oneLine(lines[i].text)).join(SEP));
+  const byBlock = await translateAll(key, texts, base);
+
+  // 줄 수가 안 맞거나 빈 줄이 섞이면 그 묶음만 예전처럼 한 줄씩 다시 보낸다
+  const retry = [];
+  blocks.forEach((b, k) => {
+    const parts = byBlock.get(texts[k]).split(SEP_RE);
+    if (parts.length === b.length && parts.every(Boolean)) b.forEach((i, j) => { translations[i] = parts[j]; });
+    else retry.push(...b);
+  });
+  if (retry.length) {
+    const byLine = await translateAll(key, retry.map(i => oneLine(lines[i].text)), base);
+    retry.forEach(i => { translations[i] = byLine.get(oneLine(lines[i].text)) || ''; });
   }
 
-  const translations = lines.map(l => (wanted(l.text) ? map.get(l.text) || '' : ''));
   const complete = lines.every((l, i) => !wanted(l.text) || translations[i]);
   return { translations, complete };
 }

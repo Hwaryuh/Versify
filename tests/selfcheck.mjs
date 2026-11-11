@@ -20,31 +20,57 @@ assert.deepEqual(parseLrc('[00:99]bad\n[00:01]say [00:02] now'), [{ startTimeMs:
 
 const lines = ['first line', '♪', 'second line', 'first line', ''].map((text, i) => ({ startTimeMs: i * 1000, text }));
 
-// DeepL: 중복 제거, context 포함, 50개 청크, custom_instructions 거부 시 재시도
+// DeepL: 이어지는 줄은 묶어서 한 text 로, context 포함, 50개 청크, custom_instructions 거부 시 재시도
 const calls = [];
+const perLine = t => t.split(' | ').map(s => `T(${s})`).join(' | ');
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body);
   calls.push({ url, body });
   if (body.custom_instructions) return { ok: false, status: 400 };
-  return { ok: true, status: 200, json: async () => ({ translations: body.text.map(t => ({ text: `T(${t})` })) }) };
+  return { ok: true, status: 200, json: async () => ({ translations: body.text.map(t => ({ text: perLine(t) })) }) };
 };
 let r = await deepl(lines, { targetLang: 'KO', register: 'casual', apiKey: 'abc:fx' });
 assert.deepEqual(r.translations, ['T(first line)', '', 'T(second line)', 'T(first line)', '']);
 assert.equal(r.complete, true);
-assert.deepEqual(calls[1].body.text, ['first line', 'second line']);
+assert.deepEqual(calls[1].body.text, ['first line', 'second line | first line'], '♪ 에서 끊고 이어지는 줄은 묶음');
 assert.match(calls[1].body.context, /second line/);
 assert.equal(calls[1].body.formality, 'prefer_less');
 assert.match(calls[0].url, /api-free\.deepl\.com/);
 
 calls.length = 0;
-const many = Array.from({ length: 120 }, (_, i) => ({ startTimeMs: i, text: `line ${i}` }));
+const many = Array.from({ length: 120 }, (_, i) => [{ startTimeMs: i, text: `line ${i}` }, { startTimeMs: i, text: '♪' }]).flat();
 r = await deepl(many, { targetLang: 'KO', register: 'polite', apiKey: 'pro-key' });
-// Pro 호스트는 따로 기억: 첫 청크만 거부 후 재시도, 이후 50 + 20 은 지시문 없이 -> 1 + 3
+// ♪ 마다 끊겨 120 묶음. Pro 호스트는 따로 기억: 첫 청크만 거부 후 재시도, 이후 50 + 20 은 지시문 없이 -> 1 + 3
 assert.equal(calls.length, 4);
 assert.equal(calls.filter(c => c.body.custom_instructions).length, 1);
 assert.equal(calls[1].body.formality, 'prefer_more');
 assert.match(calls[0].url, /api\.deepl\.com/);
-assert.equal(r.translations[119], 'T(line 119)');
+assert.equal(r.translations[238], 'T(line 119)');
+
+// 긴 묶음은 고르게 나누고 (9 -> 5+4), standalone 줄(제목)은 따로, 같은 묶음은 한 번만
+calls.length = 0;
+const nine = Array.from({ length: 9 }, (_, i) => ({ startTimeMs: i, text: `v${i}` }));
+r = await deepl([...nine, { startTimeMs: 9, text: '♪' }, ...nine, { startTimeMs: 0, text: 'Title', standalone: true }], { targetLang: 'KO', register: 'casual', apiKey: 'abc:fx' });
+assert.equal(calls.length, 1);
+assert.deepEqual(calls[0].body.text, ['v0 | v1 | v2 | v3 | v4', 'v5 | v6 | v7 | v8', 'Title']);
+assert.equal(r.translations[10], 'T(v0)', '같은 묶음 번역 재사용');
+assert.equal(r.translations[19], 'T(Title)');
+assert.equal(r.complete, true);
+
+// 줄 수가 안 맞거나 빈 줄이 오면 그 묶음만 한 줄씩 다시. 그래도 비면 complete=false
+calls.length = 0;
+globalThis.fetch = async (url, init) => {
+  const body = JSON.parse(init.body);
+  calls.push({ url, body });
+  const out = t => (t === 'a | b' ? 'AB merged' : t === 'c | d' ? 'C |' : t === 'd' ? '' : t.toUpperCase());
+  return { ok: true, status: 200, json: async () => ({ translations: body.text.map(t => ({ text: out(t) })) }) };
+};
+const merged = ['a', 'b', '♪', 'c', 'd', '♪', 'e\nf', 'g|h'].map((text, i) => ({ startTimeMs: i, text }));
+r = await deepl(merged, { targetLang: 'KO', register: 'casual', apiKey: 'abc:fx' });
+assert.deepEqual(calls[0].body.text, ['a | b', 'c | d', 'e f | g/h'], '줄 안의 줄바꿈은 공백, 구분자 문자는 / 로');
+assert.deepEqual(calls[1].body.text, ['a', 'b', 'c', 'd']);
+assert.deepEqual(r.translations, ['A', 'B', '', 'C', '', '', 'E F', 'G/H']);
+assert.equal(r.complete, false);
 
 // Claude: 번호 매핑, 범위 밖/중복 무시, 누락 시 complete=false
 globalThis.fetch = async (url, init) => {
