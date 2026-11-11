@@ -1,0 +1,301 @@
+#slt-panel,
+#slt-reopen {
+  --slt-bg: #121212;
+  --slt-raised: #1f1f1f;
+  --slt-ring: rgba(255, 255, 255, 0.08);
+  --slt-text: #ffffff;
+  --slt-sub: #a7a7a7;
+  --slt-accent: #1ed760;
+  --slt-danger: #f3727f;
+  --slt-accent-hover: #3be477;
+  --slt-on-accent: #000000;
+  --slt-hover: #2a2a2a;
+  --slt-skeleton: #242424;
+  --slt-skeleton-hi: #333333;
+  --slt-scrollbar: #4d4d4d;
+  /* 줄 상태별 색 (불투명도 대신 색으로 흐리게 해서 흐린 줄도 4.5:1 이상 유지) */
+  --slt-line-future: #8f8f8f;        /* 5.8:1 */
+  --slt-line-future-sub: #808080;    /* 4.7:1 */
+  --slt-line-past: #bdbdbd;          /* 10:1 */
+  --slt-line-past-sub: #8f8f8f;      /* 5.8:1 */
+  --slt-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: inherit;
+  -webkit-font-smoothing: antialiased;
+}
+
+#slt-panel *,
+#slt-reopen * { box-sizing: border-box; }
+
+#slt-panel button,
+#slt-reopen { font: inherit; }
+
+#slt-panel :focus-visible,
+#slt-reopen:focus-visible {
+  outline: 2px solid var(--slt-text);
+  outline-offset: 2px;
+}
+
+#slt-panel ::selection { background: rgba(30, 215, 96, 0.35); color: var(--slt-text); }
+
+/* ── panel: 기본은 Spotify 오른쪽 사이드바 위치에 도킹 (JS가 사이드바 rect로 top/left/width/height 지정) ── */
+#slt-panel {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 280px;
+  min-height: 240px;
+  background: var(--slt-bg);
+  color: var(--slt-text);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px var(--slt-ring);
+  overflow: hidden;
+}
+
+#slt-panel[data-mode="floating"] {
+  resize: both;
+  box-shadow: inset 0 0 0 1px var(--slt-ring), 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+#slt-panel[hidden],
+#slt-reopen[hidden] { display: none; }
+
+/* ── header ── */
+#slt-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 12px 16px;
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+  touch-action: none; /* 터치 드래그가 페이지 스크롤로 새지 않게 */
+}
+
+#slt-header:active { cursor: grabbing; }
+
+#slt-titles { flex: 1; min-width: 0; }
+
+#slt-title,
+#slt-title-tr,
+#slt-artist {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#slt-title { font-size: 15px; font-weight: 700; line-height: 1.3; }
+#slt-title-tr { font-size: 13px; font-weight: 600; line-height: 1.4; }
+#slt-title-tr[hidden] { display: none; }
+#slt-artist { font-size: 13px; color: var(--slt-sub); line-height: 1.4; }
+
+.slt-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--slt-sub);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, transform 0.15s var(--slt-ease);
+}
+
+.slt-icon-btn:hover { color: var(--slt-text); background: var(--slt-raised); }
+.slt-icon-btn:active { transform: scale(0.94); }
+.slt-icon-btn[aria-pressed="true"] { color: var(--slt-accent); }
+.slt-icon-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+
+/* ── lyrics list ── */
+#slt-body { position: relative; flex: 1; min-height: 0; }
+
+#slt-lyrics {
+  position: relative; /* 라인 offsetTop 기준 */
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 8px 16px;
+  /* 위아래 가장자리에서 줄이 잘리지 않고 스며들듯 사라지게 */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 32px), transparent 100%);
+  scrollbar-width: thin;
+  scrollbar-color: var(--slt-scrollbar) transparent;
+  overscroll-behavior: contain;
+}
+
+/* 위는 일반 여백: 첫 줄들은 맨 위에서 시작하고, 현재 줄이 40% 지점을 지나면 거기 고정된다.
+   아래만 크게 둬서 마지막 줄까지 40% 지점으로 올라올 수 있게 한다. (padding % 는 폭 기준이라 vh 사용) */
+#slt-lyrics[data-synced="true"] { padding-bottom: 60vh; }
+
+.slt-line {
+  --line-main: var(--slt-line-future);
+  --line-sub: var(--slt-line-future-sub);
+  padding: 8px 0;
+  word-break: keep-all;    /* 한국어를 음절이 아닌 어절 단위로 줄바꿈 */
+  overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 단어 */
+  border-radius: 4px;
+  outline-offset: 4px;
+}
+
+#slt-lyrics[data-synced="true"] .slt-line { cursor: pointer; }
+#slt-lyrics[data-synced="true"] .slt-line:hover { --line-main: #d9d9d9; --line-sub: var(--slt-sub); }
+#slt-lyrics[data-synced="false"] .slt-line,
+.slt-line.slt-active { --line-main: var(--slt-text); --line-sub: var(--slt-sub); }
+.slt-line.slt-past { --line-main: var(--slt-line-past); --line-sub: var(--slt-line-past-sub); }
+
+#slt-lyrics:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--slt-text); border-radius: 8px; }
+.slt-line:focus-visible { outline: 2px solid var(--slt-text); }
+
+.slt-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.slt-original {
+  margin: 0 0 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--line-sub, var(--slt-sub));
+  transition: color 0.3s var(--slt-ease);
+}
+
+.slt-translated {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+  color: var(--line-main, var(--slt-text));
+  text-wrap: pretty;
+  transition: color 0.3s var(--slt-ease);
+}
+
+/* 번역이 없으면 (같은 언어/누락) 원문을 주 텍스트로 */
+.slt-line[data-only-original] .slt-original {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.4;
+  color: var(--line-main);
+}
+
+#slt-panel[data-hide-original] .slt-line:not([data-only-original]) .slt-original { display: none; }
+
+.slt-line.slt-gap { padding: 4px 0; }
+.slt-line.slt-gap .slt-original { font-size: 16px; color: var(--slt-sub); }
+
+.slt-pending {
+  display: block;
+  height: 0.9em;
+  width: 70%;
+  margin-top: 6px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--slt-skeleton) 0%, var(--slt-skeleton-hi) 50%, var(--slt-skeleton) 100%);
+  background-size: 200% 100%;
+  animation: slt-shimmer 1.4s linear infinite;
+}
+
+@keyframes slt-shimmer { to { background-position: -200% 0; } }
+
+/* ── states ── */
+.slt-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0 24px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--slt-sub);
+}
+
+.slt-state strong { font-size: 16px; color: var(--slt-text); }
+.slt-state.slt-error strong { color: var(--slt-danger); }
+
+.slt-primary {
+  padding: 8px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--slt-accent);
+  color: var(--slt-on-accent);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.15s var(--slt-ease), background-color 0.15s;
+}
+
+.slt-primary:hover { background: var(--slt-accent-hover); transform: scale(1.03); }
+.slt-primary:active { transform: scale(0.98); }
+
+.slt-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--slt-sub);
+}
+
+#slt-follow {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--slt-text);
+  color: var(--slt-on-accent);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+}
+
+#slt-follow[hidden] { display: none; }
+
+/* ── collapsed pill ── */
+#slt-reopen {
+  position: fixed;
+  right: 16px;
+  bottom: 104px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px 8px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--slt-raised);
+  color: var(--slt-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--slt-ring), 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+#slt-reopen:hover { background: var(--slt-hover); }
+#slt-reopen svg { width: 16px; height: 16px; fill: var(--slt-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  #slt-panel *,
+  #slt-reopen { transition: none !important; animation: none !important; }
+}
+
+/* ── Spotify 자체 가사 화면에 끼워 넣는 번역 (색은 Spotify 줄 상태를 그대로 따름) ── */
+.slt-native-tr {
+  margin-top: 0.2em;
+  font-size: 0.62em;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: 0;
+  opacity: 0.85;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}

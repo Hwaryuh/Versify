@@ -1,0 +1,36 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Dependencies / build
+node_modules/
+dist/
+build/
+*.zip
+*.crx
+*.pem
+
+# Cache / logs
+.cache/
+*.log
+npm-debug.log*
+coverage/
+
+# Local AI / tool files
+.impeccable/
+.claude/
+.serena/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
