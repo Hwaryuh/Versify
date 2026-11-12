@@ -55,7 +55,7 @@
   "extensionUpdated": { "message": "확장 프로그램이 업데이트됐습니다. 페이지를 새로고침하세요." },
 
   "popupTitle": { "message": "Versify 설정" },
-  "lyricsSources": { "message": "가사: Spotify, LRCLIB, lyrics.ovh" },
+  "lyricsSources": { "message": "가사: Spotify, LRCLIB, 벅스, lyrics.ovh" },
   "engineLegend": { "message": "번역 엔진" },
   "hintDeepl": { "message": "무료(월 50만 자)입니다." },
   "hintClaude": { "message": "곡 전체를 한 번에 번역해 맥락과 말투가 가장 일관됩니다. 사용량만큼 과금됩니다." },

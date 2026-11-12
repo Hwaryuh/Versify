@@ -55,7 +55,7 @@
 
 그 밖에:
 
-- **가사 출처**: Spotify 자체 가사, [LRCLIB](https://lrclib.net), [lyrics.ovh](https://lyrics.ovh) 순으로 검색합니다.
+- **가사 출처**: Spotify 자체 가사, [LRCLIB](https://lrclib.net), [벅스](https://music.bugs.co.kr), [lyrics.ovh](https://lyrics.ovh) 순으로 검색합니다.
 - **번역 지원 언어**: 한국어, 일본어, 중국어(간체), 영어
 - **캐시**: 완료된 번역은 기기에 캐시되므로 같은 곡을 다시 들어도 비용이 들지 않습니다. 캐시는 설정에서 언제든 지울 수 있습니다.
 - **키보드 지원**: 방향키로 옮기고, <kbd>Enter</kbd>로 선택한 라인부터 재생합니다.
@@ -76,7 +76,7 @@ Chrome 111 이상이 필요하며, 현재 한국어로만 제공됩니다.
 
 ## 개인정보
 
-- Versify에는 서버가 없습니다. 가사는 Spotify, LRCLIB, lyrics.ovh에서 검색하고, 번역 요청은 브라우저에서 DeepL이나 Anthropic으로 전송합니다.
+- Versify에는 서버가 없습니다. 가사는 Spotify, LRCLIB, 벅스, lyrics.ovh에서 검색하고, 번역 요청은 브라우저에서 DeepL이나 Anthropic으로 전송합니다.
 - API 키는 이 기기(`chrome.storage.local`)에만 저장되고 동기화되지 않습니다.
 - 번역 호출은 탭마다 10분에 20곡까지로 제한합니다. 페이지가 오작동해도 사용량이 한꺼번에 소진되지 않습니다.
 

@@ -55,7 +55,7 @@
 
 Also in the box:
 
-- **Three lyrics sources.** Spotify's own synced lyrics first, then [LRCLIB](https://lrclib.net), then [lyrics.ovh](https://lyrics.ovh). No account or key needed for any of them.
+- **Four lyrics sources.** Spotify's own synced lyrics first, then [LRCLIB](https://lrclib.net), then [Bugs](https://music.bugs.co.kr) (unofficial endpoints, for Korean songs LRCLIB lacks), then [lyrics.ovh](https://lyrics.ovh). No account or key needed for any of them.
 - **Four target languages.** Korean, Japanese, Chinese (Simplified) and English.
 - **Translate once, keep it.** Finished translations are cached on your device, so replaying a song costs nothing. Clear the cache from settings at any time.
 - **Repeated lines stay consistent.** A chorus is translated once and reused, so it reads the same every time.
@@ -77,7 +77,7 @@ Requires Chrome 111 or later. The extension's interface is currently in Korean.
 
 ## Privacy
 
-- Versify has no server. Lyrics come straight from Spotify, LRCLIB or lyrics.ovh, and translations go straight from your browser to DeepL or Anthropic.
+- Versify has no server. Lyrics come straight from Spotify, LRCLIB, Bugs or lyrics.ovh, and translations go straight from your browser to DeepL or Anthropic.
 - When LRCLIB has no match for a romanized artist name (for example "Yutaka Ozaki"), Versify sends that artist name to [MusicBrainz](https://musicbrainz.org) to look up the original-script name (尾崎豊). It sends nothing else.
 - API keys are stored only on your device (`chrome.storage.local`) and are never synced.
 - Translation calls are capped at 20 songs per tab every 10 minutes, so a misbehaving page cannot burn through your quota.
@@ -94,7 +94,7 @@ node tests/live-deepl.mjs     # real DeepL call; needs DEEPL_API_KEY in the envi
 ```
 background/   service worker: lyrics lookup, translation, cache
 content/      reads the current track and playback position from the player
-lyrics/       LRCLIB, lyrics.ovh and MusicBrainz clients
+lyrics/       LRCLIB, Bugs, lyrics.ovh and MusicBrainz clients
 translate/    DeepL and Claude clients, shared tone rules
 ui/           side panel, native lyrics overlay, popup, settings
 _locales/     every user-facing string

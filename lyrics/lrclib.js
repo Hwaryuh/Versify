@@ -1,7 +1,9 @@
-// lrclib.net (무료, 키 없음, LRC 싱크 가사) -> 실패 시 lyrics.ovh (plain)
+// lrclib.net (무료, 키 없음, LRC 싱크 가사) -> 벅스 -> 실패 시 lyrics.ovh (plain)
 // 반환: { lines: [{ startTimeMs, text }], synced, source } | null
 
 import { t } from '../i18n.js';
+import { fetchBugs } from './bugs.js';
+import { cleanTitle, isVersionVariant, plainLines } from './text.js';
 
 const UA = 'SpotifyLyricsTranslator/2.0';
 
@@ -41,10 +43,6 @@ function parseLrc(lrc) {
   return lines.sort((a, b) => a.startTimeMs - b.startTimeMs);
 }
 
-function plainLines(text) {
-  return text.split(/\r?\n/).map(t => ({ startTimeMs: 0, text: t.trim() })).filter(l => l.text);
-}
-
 function fromRecord(rec) {
   if (!rec || rec.instrumental) return null;
   if (rec.syncedLyrics) {
@@ -64,23 +62,6 @@ function unsynced(rec) {
   const lines = plainLines(rec.plainLyrics || parseLrc(rec.syncedLyrics || '').map(l => l.text).join('\n'));
   return lines.length ? { lines, synced: false, source: 'lrclib' } : null;
 }
-
-// "Song - Remastered 2011", "Song (feat. X)", "曲（2005LIVE）" 같은 꼬리 제거 (검색용).
-// NFKC 로 전각 괄호·영숫자를 반각으로 맞춘다
-// 글자 경계 필수: "(Alive)", "Olive" 는 버전 표기가 아니다. "2005LIVE" 처럼 숫자 붙은 건 허용
-const VERSION = '(?<![a-z])(?:remaster(?:ed)?|version|ver\\.|live|edit|re-?mix|mix|mono|stereo|acoustic)(?![a-z])';
-const VERSION_TAIL = new RegExp(`\\s+-\\s+.*${VERSION}.*$`, 'i');
-const VERSION_PAREN = new RegExp(`\\s*[([][^)\\]]*${VERSION}[^)\\]]*[)\\]]`, 'i');
-
-function cleanTitle(title) {
-  return title.normalize('NFKC')
-    .replace(VERSION_TAIL, '')
-    .replace(/\s*[([](feat|ft|with)\.?\s[^)\]]*[)\]]/i, '')
-    .replace(VERSION_PAREN, '')
-    .trim();
-}
-
-const isVersionVariant = title => VERSION_TAIL.test(title.normalize('NFKC')) || VERSION_PAREN.test(title.normalize('NFKC'));
 
 // Spotify 는 아티스트명을 로마자로 바꿔 보여주기도 한다("尾崎豊" -> "Yutaka Ozaki").
 // MusicBrainz 별칭에서 입력과 정확히 같은 이름을 가진 아티스트를 찾아 비라틴 문자 이름을 돌려준다.
@@ -210,12 +191,17 @@ async function fetchLyricsOvh({ title, artist }) {
 
 async function fetchLyrics(track) {
   let lrclibError = null;
+  let lrclib = null;
   try {
-    const result = await fetchLrclib(track);
-    if (result) return result;
+    lrclib = await fetchLrclib(track);
+    if (lrclib?.synced) return lrclib;
   } catch (e) {
     lrclibError = e; // lrclib 장애여도 다음 소스로 진행
   }
+  // 벅스: 싱크 가사면 lrclib 의 plain 보다 낫다. 벅스 장애는 조용히 넘긴다
+  const bugs = await fetchBugs(track).catch(() => null);
+  if (bugs?.synced) return bugs;
+  if (lrclib || bugs) return lrclib || bugs;
   try {
     const result = await fetchLyricsOvh(track);
     if (result) return result;

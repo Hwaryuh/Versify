@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseLrc, fetchLyrics } from '../lyrics/lrclib.js';
+import { parseSearch, parseSynced, parseDuration } from '../lyrics/bugs.js';
 import { translateLines as deepl } from '../translate/deepl.js';
 import { translateLines as claude } from '../translate/claude.js';
 import { isInTargetLang, isTranslatable } from '../translate/style.js';
@@ -128,7 +129,7 @@ assert.equal(r.complete, true);
 
 // i18n: 코드에서 쓰는 키가 전부 messages.json 에 있는지 (없으면 화면에 키 이름이 그대로 나옴)
 const messages = JSON.parse(readFileSync(new URL('../_locales/ko/messages.json', import.meta.url), 'utf8'));
-for (const file of ['background/service-worker.js', 'lyrics/lrclib.js','translate/deepl.js', 'translate/claude.js', 'ui/panel.js', 'ui/popup.js', 'ui/popup.html', 'ui/options.js', 'ui/options.html', 'manifest.json']) {
+for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/bugs.js', 'translate/deepl.js', 'translate/claude.js', 'ui/panel.js', 'ui/popup.js', 'ui/popup.html', 'ui/options.js', 'ui/options.html', 'manifest.json']) {
   const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   for (const m of src.matchAll(/'(\w+)'|data-i18n(?:-label)?="(\w+)"|__MSG_(\w+)__/g)) {
     const key = m[1] || m[2] || m[3];
@@ -306,6 +307,60 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js','translat
   globalThis.fetch = async (url) => (new URL(String(url)).host === 'musicbrainz.org' ? json({ artists: [] }) : busy);
   await assert.rejects(fetchLyrics({ title: 'Indie', artist: 'Nobody', album: '', durationMs: 200000 }),
     { message: 'errLyricsServer' }, '"HTTP 503" 을 화면에 그대로 내보내지 않는다');
+}
+
+// 벅스: 검색 HTML 파싱, 싱크 가사 형식, 같은 제목 다른 곡은 길이로 거른다
+{
+  const row = (id, title, artist, album) => `<tr albumId="1" artistId="2" trackId="${id}" multiArtist="N" rowType="track" >
+    <th scope="row"><p class="title" adult_yn="N"><a href="javascript:;" title="${title}" aria-label="새창">${title}</a></p></th>
+    <td class="left"><p class="artist"><a href="/artist/2" title="${artist}">${artist}</a></p></td>
+    <td class="left"><a href="/album/1" class="album" title="${album}">${album}</a></td></tr>`;
+  const html = row(34029104, '하얀 섬', 'Sagi', 'Sagi EP') + row(32419053, '하얀 섬', '이희상', 'WHOEVER') +
+    row(1, 'Tom &amp; Jerry', 'A', 'B') + '<tr rowType="track"><td>no id</td></tr>';
+  assert.deepEqual(parseSearch(html).map(r => [r.id, r.title, r.artists, r.album]), [
+    ['34029104', '하얀 섬', ['Sagi'], 'Sagi EP'],
+    ['32419053', '하얀 섬', ['이희상'], 'WHOEVER'],
+    ['1', 'Tom & Jerry', ['A'], 'B']
+  ]);
+  assert.deepEqual(parseSynced('8.0|둘째＃4.6|하얀 섬＃bad＃9|'), [
+    { startTimeMs: 4600, text: '하얀 섬' }, { startTimeMs: 8000, text: '둘째' }, { startTimeMs: 9000, text: '' }
+  ]);
+  assert.deepEqual(parseSynced(''), []);
+  assert.equal(parseDuration('"duration": "PT1M56S"'), 116);
+  assert.equal(parseDuration('"duration": "PT"'), 0);
+
+  const lengths = { 34029104: 'PT3M30S', 32419053: 'PT1M56S' };
+  const text = (body, status = 200) => ({ ok: status < 400, status, text: async () => body, json: async () => JSON.parse(body) });
+  const bugsHits = [];
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(String(url));
+    if (u.host === 'musicbrainz.org') return text('{"artists":[]}');
+    if (u.host === 'lrclib.net') return u.pathname === '/api/search' ? text('[]') : text('null', 404);
+    if (u.host !== 'music.bugs.co.kr') return text('', 404);
+    bugsHits.push(u.pathname);
+    if (u.pathname === '/search/track') return text(html);
+    const track = /^\/track\/(\d+)$/.exec(u.pathname);
+    if (track) return text(`{"duration": "${lengths[track[1]]}"}`);
+    const lyr = /^\/player\/lyrics\/([TN])\/(\d+)$/.exec(u.pathname);
+    assert.equal(init?.headers?.['X-Requested-With'], 'XMLHttpRequest');
+    if (lyr[2] !== '32419053') return text('{"lyrics":"wrong song"}');
+    return text(JSON.stringify({ lyrics: lyr[1] === 'T' ? '4.6|하얀 섬＃8.0|우리 그 위에 집을 짓자' : 'x' }));
+  };
+  r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: 'WHOEVER', durationMs: 116000 });
+  assert.deepEqual(r, { lines: [{ startTimeMs: 4600, text: '하얀 섬' }, { startTimeMs: 8000, text: '우리 그 위에 집을 짓자' }], synced: true, source: 'bugs' });
+  assert.equal(bugsHits[1], '/track/32419053', '앨범이 맞는 후보부터 길이를 본다');
+
+  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 200000 }), null, '길이가 안 맞으면 같은 제목이어도 안 쓴다');
+  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: 'WHOEVER', durationMs: 0 }), null, '길이를 모르면 앨범만으로는 안 쓴다');
+  r = await fetchLyrics({ title: '하얀 섬', artist: '이희상', album: '', durationMs: 0 });
+  assert.equal(r?.source, 'bugs', '길이를 모르면 아티스트 이름이 같을 때만');
+
+  r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 });
+  assert.equal(r?.source, 'bugs', '아티스트·앨범이 안 맞아도 길이 맞는 후보가 하나면 쓴다');
+  lengths[34029104] = 'PT1M57S';
+  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 }), null, '길이 맞는 다른 곡이 둘 이상이면 고르지 않는다');
+  r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: 'WHOEVER', durationMs: 116000 });
+  assert.equal(r?.lines[0].text, '하얀 섬', '앨범이 맞으면 길이 같은 다른 곡이 있어도 고른다');
 }
 
 console.log('selfcheck ok');

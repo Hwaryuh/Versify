@@ -19,6 +19,7 @@
     "https://open.spotify.com/*",
     "https://lrclib.net/*",
     "https://api.lyrics.ovh/*",
+    "https://music.bugs.co.kr/*",
     "https://musicbrainz.org/*",
     "https://*.deepl.com/*",
     "https://api.anthropic.com/*"
