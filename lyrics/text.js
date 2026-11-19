@@ -21,4 +21,13 @@ function cleanTitle(title) {
 
 const isVersionVariant = title => VERSION_TAIL.test(title.normalize('NFKC')) || VERSION_PAREN.test(title.normalize('NFKC'));
 
-export { cleanTitle, isVersionVariant, plainLines };
+// 공백·구두점·대소문자 차이를 무시한 비교용 키
+const norm = s => s.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+
+// 검색 결과 제목이 우리 곡 제목과 같은 곡인가 (버전·feat 꼬리는 무시). 부분 일치("연애" vs "나 그거하나봐 연애")는 다른 곡이다
+const sameTitle = (a, b) => {
+  const key = norm(cleanTitle(a || ''));
+  return !!key && key === norm(cleanTitle(b || ''));
+};
+
+export { cleanTitle, isVersionVariant, norm, plainLines, sameTitle };

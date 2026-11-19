@@ -224,7 +224,7 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
     if (u.pathname === '/api/search') {
       const a = u.searchParams.get('artist_name');
       searched.push(a ?? `q:${u.searchParams.get('q')}`);
-      return json(a === '尾崎豊' && u.searchParams.get('track_name') === '愛の消えた街' ? [{ duration: 284, syncedLyrics: '[00:01]native' }] : []);
+      return json(a === '尾崎豊' && u.searchParams.get('track_name') === '愛の消えた街' ? [{ trackName: '愛の消えた街', duration: 284, syncedLyrics: '[00:01]native' }] : []);
     }
     return json(null, 404);
   };
@@ -268,6 +268,25 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   globalThis.fetch = base;
 }
 
+// lrclib 검색은 부분 일치: 제목이 정확히 같지 않은 레코드는 길이가 맞아도 쓰지 않는다 ("연애" vs "나 그거하나봐 연애")
+{
+  const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+  const rec = (trackName, text) => ({ trackName, artistName: 'x', duration: 236, syncedLyrics: `[00:01]${text}` });
+  let results = [rec('나 그거하나봐 연애', 'wrong')];
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    if (u.host === 'musicbrainz.org') return json({ artists: [] });
+    if (u.pathname === '/api/search') return json(results);
+    return json(null, 404);
+  };
+  const track = { title: '연애 (feat. 이서영)', artist: '단편선 순간들, 이서영', album: '', durationMs: 236000 };
+  assert.equal(await fetchLyrics(track), null, '제목만 부분 일치하는 곡은 쓰지 않는다');
+  results = [rec('나 그거하나봐 연애', 'wrong'), rec('연애 (feat. 이서영)', 'right')];
+  assert.equal((await fetchLyrics(track)).lines[0].text, 'right', '제목이 같은 레코드는 feat 꼬리가 달려도 쓴다');
+  results = [rec('연  애', 'spaced')];
+  assert.equal((await fetchLyrics(track)).lines[0].text, 'spaced', '공백 차이는 무시한다');
+}
+
 // 버전 표기 판별: 단어 경계 ("(Olive)" 는 지우지 않음)
 {
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -296,7 +315,7 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
     if (u.host === 'musicbrainz.org') return json({ artists: [] });
     if (step === '/api/get') return hits[step] === 1 ? busy : json(null, 404);
     if (step === '/api/search') return busy;
-    if (step === '/api/search?q') return json([{ duration: 200, syncedLyrics: '[00:01]found' }]);
+    if (step === '/api/search?q') return json([{ trackName: 'Indie', duration: 200, syncedLyrics: '[00:01]found' }]);
     return json(null, 404);
   };
   r = await fetchLyrics({ title: 'Indie', artist: 'Nobody', album: '', durationMs: 200000 });
@@ -355,12 +374,41 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   r = await fetchLyrics({ title: '하얀 섬', artist: '이희상', album: '', durationMs: 0 });
   assert.equal(r?.source, 'bugs', '길이를 모르면 아티스트 이름이 같을 때만');
 
-  r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 });
-  assert.equal(r?.source, 'bugs', '아티스트·앨범이 안 맞아도 길이 맞는 후보가 하나면 쓴다');
+  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 }), null, '아티스트·앨범이 안 맞으면 길이가 맞아도 쓰지 않는다');
   lengths[34029104] = 'PT1M57S';
-  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 }), null, '길이 맞는 다른 곡이 둘 이상이면 고르지 않는다');
   r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: 'WHOEVER', durationMs: 116000 });
   assert.equal(r?.lines[0].text, '하얀 섬', '앨범이 맞으면 길이 같은 다른 곡이 있어도 고른다');
+}
+
+// 벅스: 첫 요청 429 (쿠키 발급) 는 한 번 재시도, 흔한 제목은 아티스트를 붙여 검색, 없으면 제목만으로 다시
+{
+  const row = (id, title, artist, album) => `<tr trackId="${id}" rowType="track"><p class="title"><a title="${title}">${title}</a></p>
+    <p class="artist"><a title="${artist}">${artist}</a></p><a class="album" title="${album}">${album}</a></tr>`;
+  const text = (body, status = 200) => ({ ok: status < 400, status, headers: { get: () => '0.01' }, text: async () => body, json: async () => JSON.parse(body) });
+  const searches = [];
+  let blocked = true;
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(String(url));
+    if (u.host === 'musicbrainz.org') return text('{"artists":[]}');
+    if (u.host === 'lrclib.net') return u.pathname === '/api/search' ? text('[]') : text('null', 404);
+    if (u.pathname === '/search/track') {
+      searches.push(u.searchParams.get('q'));
+      if (blocked) { blocked = false; assert.equal(init?.credentials, 'include'); return text('', 429); }
+      return text(u.searchParams.get('q') === '연애 단편선 순간들'
+        ? row(1, '연애', '단편선 순간들', '연인들') : row(2, '연애', 'Other', 'X'));
+    }
+    if (u.pathname === '/track/1') return text('{"duration": "PT3M58S"}');
+    if (u.pathname === '/player/lyrics/T/1') return text('{"lyrics":"30.0|first line"}');
+    return text('{"lyrics":""}');
+  };
+  const track = { title: '연애 (feat. 이서영)', artist: '단편선 순간들, 이서영', album: '연인들', durationMs: 238000 };
+  r = await fetchLyrics(track);
+  assert.equal(r?.lines[0].text, 'first line');
+  assert.deepEqual(searches, ['연애 단편선 순간들', '연애 단편선 순간들'], '429 는 한 번 재시도, 검색어에 첫 아티스트를 붙인다');
+
+  searches.length = 0;
+  assert.equal(await fetchLyrics({ ...track, artist: 'Nobody', album: '' }), null, '아티스트 검색이 비면 제목만으로 다시 찾되 안 맞으면 포기');
+  assert.deepEqual(searches, ['연애 Nobody', '연애']);
 }
 
 console.log('selfcheck ok');

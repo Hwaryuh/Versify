@@ -3,25 +3,18 @@
 
 import { t } from '../i18n.js';
 import { fetchBugs } from './bugs.js';
-import { cleanTitle, isVersionVariant, plainLines } from './text.js';
+import { fetchWithTimeout, waitRetryAfter } from './http.js';
+import { cleanTitle, isVersionVariant, plainLines, sameTitle } from './text.js';
 
 const UA = 'SpotifyLyricsTranslator/2.0';
 
 async function fetchJson(url, headers = {}, retry = true) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  let res;
-  try {
-    res = await fetch(url, { headers, signal: controller.signal });
-    if (res.status === 404) return null;
-    if (res.ok) return await res.json();
-  } finally {
-    clearTimeout(timeout);
-  }
+  const { res, body } = await fetchWithTimeout(url, { headers }, r => r.json());
+  if (res.ok) return body;
+  if (res.status === 404) return null;
   // lrclib 은 DB 에 없는 곡을 밖에서 찾다가 바쁘면 404 대신 503 + retry-after 를 준다 -> 한 번만 기다렸다 다시
   if (res.status === 503 && retry) {
-    const wait = Math.min(Number(res.headers?.get('retry-after')) || 1, 3);
-    await new Promise(r => setTimeout(r, wait * 1000));
+    await waitRetryAfter(res, 3);
     return fetchJson(url, headers, false);
   }
   throw new Error(`HTTP ${res.status}`);
@@ -115,10 +108,12 @@ async function fetchLrclib({ title, artist, album, durationMs }) {
   const exact = fromRecord(await tryFetch(get));
   if (exact) return exact;
 
-  // 정확 매칭 실패 -> 검색 후 길이가 가까운 후보 (싱크 우선)
+  // 정확 매칭 실패 -> 검색 후 길이가 가까운 후보 (싱크 우선).
+  // 검색은 부분 일치라 "연애" 에 "나 그거하나봐 연애" 가 섞인다 -> 제목이 같은 레코드만 쓴다
   const gap = r => (durationSec && r.duration ? Math.abs(r.duration - durationSec) : 99);
   const pick = (results, strict) => {
     const candidates = (Array.isArray(results) ? results : [])
+      .filter(r => sameTitle(r.trackName, title))
       .filter(r => (strict ? gap(r) <= 3 : !durationSec || !r.duration || gap(r) <= 3))
       .sort((a, b) => Number(!!b.syncedLyrics) - Number(!!a.syncedLyrics) || gap(a) - gap(b));
     for (const c of candidates) {
@@ -129,9 +124,8 @@ async function fetchLrclib({ title, artist, album, durationMs }) {
   };
 
   // 제목이 같은데 길이만 다른 레코드 (같은 곡의 다른 녹음). 싱크 없이 텍스트만 쓴다
-  const baseTitle = cleanTitle(title).toLowerCase();
   const sameTitleTakes = results => (Array.isArray(results) ? results : [])
-    .filter(r => cleanTitle(r.trackName || '').toLowerCase() === baseTitle)
+    .filter(r => sameTitle(r.trackName, title))
     .map(unsynced).filter(Boolean);
   // 다른 아티스트 레코드는 제목 같은 레코드들의 첫 줄이 전부 같을 때만 (= 같은 곡이라는 근거).
   // "I Love You" 처럼 제목만 같은 다른 곡이 섞이면 포기한다
