@@ -1,14 +1,13 @@
-// 벅스 (비공식 엔드포인트, 개인용). LRCLIB 에 없는 한국 곡 보충용
-// 반환: { lines: [{ startTimeMs, text }], synced, source: 'bugs' } | null. 장애는 null 로 삼킨다 (다음 소스로 진행)
+// Bugs (unofficial endpoint, personal use). Supplements Korean songs missing from LRCLIB.
 
 import { fetchWithTimeout, waitRetryAfter } from './http.js';
-import { cleanTitle, norm, plainLines, sameTitle } from './text.js';
+import { learnFromCredits } from './artists.js';
+import { ARTIST_EXACT, artistMatch, cleanTitle, norm, plainLines, sameTitle } from './text.js';
 
 const BASE = 'https://music.bugs.co.kr';
 const MAX_CANDIDATES = 3;
 
-// 벅스는 쿠키 없는 첫 요청에 429 + Set-Cookie 를 주고, 쿠키를 들고 다시 오면 200 을 준다.
-// 한 번만 쿠키(credentials)를 받아 재시도한다
+// The first request without a cookie gets 429 + Set-Cookie. Retry once with the cookie.
 async function fetchText(url, headers = {}, retry = true) {
   const { res, body } = await fetchWithTimeout(url, { headers, credentials: 'include' }, r => r.text());
   if (res.ok) return body;
@@ -33,7 +32,6 @@ const attr = (tag, name) => {
   return m ? decode(m[1] ?? m[2]) : null;
 };
 
-// 검색 결과 HTML -> [{ id, title, artists, album }]. trackId 나 제목이 없는 행은 버린다
 function parseSearch(html) {
   const rows = [];
   for (const m of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
@@ -51,7 +49,7 @@ function parseSearch(html) {
   return rows;
 }
 
-// "4.6|하얀 섬＃8.0|우리 그 위에 집을 짓자" (초|줄, 전각 ＃ 구분). 형식이 틀린 조각은 버린다
+// "4.6|first line＃8.0|second line" (seconds|line, separated by the full-width ＃). Malformed pieces are dropped.
 function parseSynced(text) {
   const lines = [];
   for (const part of text.split('＃')) {
@@ -61,7 +59,6 @@ function parseSynced(text) {
   return lines.some(l => l.text) ? lines.sort((a, b) => a.startTimeMs - b.startTimeMs) : [];
 }
 
-// 트랙 페이지 JSON-LD "duration": "PT1M56S" -> 초
 function parseDuration(html) {
   const m = /"duration"\s*:\s*"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?"/.exec(html);
   if (!m || !(m[1] || m[2] || m[3])) return 0;
@@ -78,36 +75,38 @@ async function lyricsJson(kind, id) {
   }
 }
 
-async function fetchBugs({ title, artist, album, durationMs }) {
+async function fetchBugs({ title, album, durationMs }, known) {
   const query = cleanTitle(title);
   const wanted = norm(query);
   if (!wanted) return null;
   const durationSec = durationMs ? Math.round(durationMs / 1000) : 0;
-  const ourArtists = artist.split(/,\s*/).map(norm).filter(Boolean);
-  const ourAlbum = norm(album || '');
+  const ourAlbum = norm(album || '') === wanted ? '' : norm(album || '');
 
-  // "연애" 같은 흔한 제목은 제목만 검색하면 상위 50건에 원하는 곡이 없다 -> 제목 + 아티스트로 먼저 검색하고,
-  // 후보가 없으면 제목만으로 다시 (아티스트 표기가 달라도 앨범이 맞는 후보를 찾는다)
+  // A common title searched alone may not list the song in the top 50: search title + artist first, then title only.
   const findCandidates = async q => {
     const html = await fetchText(`${BASE}/search/track?q=${encodeURIComponent(q)}`);
-    return (html ? parseSearch(html) : [])
-      .filter(r => sameTitle(r.title, title))
-      .map(r => ({ ...r, artistMatch: r.artists.some(a => ourArtists.includes(norm(a))), albumMatch: !!ourAlbum && norm(r.album) === ourAlbum }))
-      .filter(c => c.artistMatch || c.albumMatch)
-      .sort((a, b) => (b.artistMatch + b.albumMatch) - (a.artistMatch + a.albumMatch))
+    const rows = (html ? parseSearch(html) : []).filter(r => sameTitle(r.title, title));
+    await learnFromCredits(rows.flatMap(r => r.artists), known);
+    return rows
+      .map(r => ({ ...r, artistLevel: Math.max(0, ...r.artists.map(a => artistMatch(a, known.names))), albumMatch: !!ourAlbum && norm(r.album) === ourAlbum }))
+      .filter(c => c.artistLevel || c.albumMatch)
+      .sort((a, b) => (b.artistLevel + b.albumMatch) - (a.artistLevel + a.albumMatch))
       .slice(0, MAX_CANDIDATES);
   };
-  const firstArtist = artist.split(/,\s*/)[0].trim();
-  let candidates = firstArtist ? await findCandidates(`${query} ${firstArtist}`) : [];
+  let candidates = [];
+  for (const name of [known.names[0], ...known.searchNames].filter(Boolean)) {
+    candidates = await findCandidates(`${query} ${name}`);
+    if (candidates.length) break;
+  }
   if (!candidates.length) candidates = await findCandidates(query);
 
-  // 같은 제목의 다른 곡이 흔하다 ("하얀 섬": 이희상, Sagi, ...). 아티스트나 앨범이 맞는 후보만 보고,
-  // 길이를 알면 ±3초 일치가 필수, 모르면 아티스트 이름이 정확히 같을 때만 쓴다 (앨범명만으로는 근거 부족).
-  // 아티스트·앨범이 안 맞는 후보는 길이가 맞아도 쓰지 않는다 ("연애" 같은 흔한 제목에서 오탐)
+  // Songs sharing a title are common. Consider only candidates whose artist or album matches;
+  // with a known duration it must match within 3s; without one, only an exactly equal artist name is accepted (album alone is not enough evidence).
+  // Candidates whose artist and album both differ are never used, even if the duration matches.
   let match = null;
   for (const c of candidates) {
     if (!durationSec) {
-      if (c.artistMatch) { match = c; break; }
+      if (c.artistLevel === ARTIST_EXACT) { match = c; break; }
       continue;
     }
     const page = await fetchText(`${BASE}/track/${c.id}`);

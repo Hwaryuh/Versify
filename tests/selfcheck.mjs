@@ -1,13 +1,14 @@
-// node tests/selfcheck.mjs  - 네트워크 없이 파싱/매핑 로직만 확인
+// node tests/selfcheck.mjs  - checks parsing/mapping logic only, no network
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parseLrc, fetchLyrics } from '../lyrics/lrclib.js';
+import { parseLrc } from '../lyrics/lrclib.js';
+import { fetchLyrics } from '../lyrics/index.js';
+import { ARTIST_EXACT, ARTIST_SOUNDS_LIKE, artistMatch, sameArtist } from '../lyrics/text.js';
 import { parseSearch, parseSynced, parseDuration } from '../lyrics/bugs.js';
 import { translateLines as deepl } from '../translate/deepl.js';
 import { translateLines as claude } from '../translate/claude.js';
 import { isInTargetLang, isTranslatable } from '../translate/style.js';
 
-// LRC: 다중 태그, 분수 없는 태그, 메타 태그, 정렬
 const lrc = '[ar:someone]\n[00:10.50][01:00.5]chorus\n[00:05]intro\n[00:20.123] verse\n[00:30.00]';
 assert.deepEqual(parseLrc(lrc), [
   { startTimeMs: 5000, text: 'intro' },
@@ -21,7 +22,6 @@ assert.deepEqual(parseLrc('[00:99]bad\n[00:01]say [00:02] now'), [{ startTimeMs:
 
 const lines = ['first line', '♪', 'second line', 'first line', ''].map((text, i) => ({ startTimeMs: i * 1000, text }));
 
-// DeepL: 이어지는 줄은 묶어서 한 text 로, context 포함, 50개 청크, custom_instructions 거부 시 재시도
 const calls = [];
 const perLine = t => t.split(' | ').map(s => `T(${s})`).join(' | ');
 globalThis.fetch = async (url, init) => {
@@ -41,14 +41,12 @@ assert.match(calls[0].url, /api-free\.deepl\.com/);
 calls.length = 0;
 const many = Array.from({ length: 120 }, (_, i) => [{ startTimeMs: i, text: `line ${i}` }, { startTimeMs: i, text: '♪' }]).flat();
 r = await deepl(many, { targetLang: 'KO', register: 'polite', apiKey: 'pro-key' });
-// ♪ 마다 끊겨 120 묶음. Pro 호스트는 따로 기억: 첫 청크만 거부 후 재시도, 이후 50 + 20 은 지시문 없이 -> 1 + 3
 assert.equal(calls.length, 4);
 assert.equal(calls.filter(c => c.body.custom_instructions).length, 1);
 assert.equal(calls[1].body.formality, 'prefer_more');
 assert.match(calls[0].url, /api\.deepl\.com/);
 assert.equal(r.translations[238], 'T(line 119)');
 
-// 긴 묶음은 고르게 나누고 (9 -> 5+4), standalone 줄(제목)은 따로, 같은 묶음은 한 번만
 calls.length = 0;
 const nine = Array.from({ length: 9 }, (_, i) => ({ startTimeMs: i, text: `v${i}` }));
 r = await deepl([...nine, { startTimeMs: 9, text: '♪' }, ...nine, { startTimeMs: 0, text: 'Title', standalone: true }], { targetLang: 'KO', register: 'casual', apiKey: 'abc:fx' });
@@ -58,7 +56,6 @@ assert.equal(r.translations[10], 'T(v0)', '같은 묶음 번역 재사용');
 assert.equal(r.translations[19], 'T(Title)');
 assert.equal(r.complete, true);
 
-// 줄 수가 안 맞거나 빈 줄이 오면 그 묶음만 한 줄씩 다시. 그래도 비면 complete=false
 calls.length = 0;
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body);
@@ -73,7 +70,6 @@ assert.deepEqual(calls[1].body.text, ['a', 'b', 'c', 'd']);
 assert.deepEqual(r.translations, ['A', 'B', '', 'C', '', '', 'E F', 'G/H']);
 assert.equal(r.complete, false);
 
-// Claude: 번호 매핑, 범위 밖/중복 무시, 누락 시 complete=false
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body);
   assert.equal(body.model, 'claude-opus-5-5');
@@ -86,7 +82,6 @@ r = await claude(lines, { targetLang: 'KO', register: 'casual', apiKey: 'k' });
 assert.deepEqual(r.translations, ['A', '', 'B', '', '']);
 assert.equal(r.complete, false);
 
-// 대상 언어 판별: 글자 절반 넘게 대상 언어 문자면 이미 그 언어 (반반·영어 우세는 번역)
 assert.equal(isInTargetLang('너를 사랑해', 'KO'), true);
 assert.equal(isInTargetLang('ㅋㅋㅋ oh', 'KO'), true);
 assert.equal(isInTargetLang('Baby 너만 보여', 'KO'), false, '반반이면 번역');
@@ -99,7 +94,6 @@ assert.equal(isInTargetLang('我爱你', 'ZH'), false, 'ZH 는 판별 안 함');
 assert.equal(isInTargetLang('너를 사랑해', 'EN-US'), false);
 assert.equal(isTranslatable('너를 사랑해'), true, '대상 언어 안 주면 기존 동작');
 
-// 한국어 대상: 한국어 줄은 보내지 않고 (DeepL 은 context 에만, Claude 는 '-' 문맥 줄로) 영어 줄만 번역
 const mixed = ['너를 사랑해', 'I love you', '♪', '너를 사랑해'].map((text, i) => ({ startTimeMs: i * 1000, text }));
 calls.length = 0;
 globalThis.fetch = async (url, init) => {
@@ -127,26 +121,23 @@ r = await claude(mixed, { targetLang: 'KO', register: 'casual', apiKey: 'k' });
 assert.deepEqual(r.translations, ['', '사랑해', '', ''], '문맥 줄 번호로 온 응답은 무시');
 assert.equal(r.complete, true);
 
-// i18n: 코드에서 쓰는 키가 전부 messages.json 에 있는지 (없으면 화면에 키 이름이 그대로 나옴)
 const messages = JSON.parse(readFileSync(new URL('../_locales/ko/messages.json', import.meta.url), 'utf8'));
-for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/bugs.js', 'translate/deepl.js', 'translate/claude.js', 'ui/panel.js', 'ui/popup.js', 'ui/popup.html', 'ui/options.js', 'ui/options.html', 'manifest.json']) {
+for (const file of ['background/service-worker.js', 'lyrics/index.js', 'lyrics/bugs.js', 'translate/deepl.js', 'translate/claude.js', 'ui/panel.js', 'ui/popup.js', 'ui/popup.html', 'ui/options.js', 'ui/options.html', 'manifest.json']) {
   const src = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
   for (const m of src.matchAll(/'(\w+)'|data-i18n(?:-label)?="(\w+)"|__MSG_(\w+)__/g)) {
     const key = m[1] || m[2] || m[3];
-    // '...' 는 키처럼 생긴 문자열 전부라서, t( 근처에 있는 것만 본다
     if (m[1] && !/\bt\([^)]*$/.test(src.slice(Math.max(0, m.index - 40), m.index))) continue;
     assert.ok(messages[key], `${file}: messages.json 에 없는 키 ${key}`);
   }
 }
 
-// player-observer: 이전 곡에 쓴 Spotify 가사를 다음 곡에 다시 붙이지 않는지 (앨범아트가 같아 보여도)
 {
   const vm = await import('node:vm');
   let onMessage = null;
   const meta = { title: 'A', artist: 'x', album: 'p', artwork: [{ src: 'https://i.scdn.co/image/ab67616d0000b273' + 'a'.repeat(24) }] };
   const dataset = {};
-  let pageTrackId = ''; // page-hook 이 읽어 줄 현재 곡 trackId ('' = 못 읽음)
-  let adShown = false; // 광고 중이면 위젯에 ad-controls 가 있다
+  let pageTrackId = '';
+  let adShown = false;
   const events = [];
   const win = {
     addEventListener: (type, fn) => { if (type === 'message') onMessage = fn; },
@@ -170,13 +161,12 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
     trackId: 'trackA', artworkHash: 'a'.repeat(24), syncType: 'UNSYNCED', lines: [{ startTimeMs: 0, text: 'old song' }], capturedAt: Date.now()
   } } });
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack())?.trackId, 'trackA');
-  meta.title = 'B'; meta.album = 'q'; // 새 곡, 아트는 그대로 읽힘
+  meta.title = 'B'; meta.album = 'q';
   SLT.checkTrack();
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack()), null);
   meta.title = 'A'; meta.album = 'p';
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack())?.trackId, 'trackA', '같은 곡에는 계속 쓴다');
 
-  // trackId 를 알면 앨범 아트가 같은 다른 곡(다음 곡 prefetch) 가사를 붙이지 않는다
   meta.title = 'C'; meta.album = 'p';
   SLT.checkTrack();
   onMessage({ source: win, data: { source: 'slt-hook', type: 'SPOTIFY_LYRICS', entry: {
@@ -187,11 +177,10 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack()), null, '현재 곡 가사가 없으면 null -> LRCLIB');
   pageTrackId = 'nextTrack';
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack())?.trackId, 'nextTrack');
-  meta.title = 'D'; // 곡은 바뀌었는데 위젯은 아직 이전 곡 trackId
+  meta.title = 'D';
   SLT.checkTrack();
   assert.equal(SLT.findSpotifyLyrics(SLT.getTrack()), null, '이전 곡에 쓴 가사를 새 곡에 붙이지 않는다');
 
-  // 광고: 곡으로 보지 않고 adPlaying 한 번만. 광고 뒤엔 같은 곡이어도 trackChanged
   events.length = 0;
   adShown = true;
   meta.title = '광고'; meta.artist = ''; meta.album = '';
@@ -205,7 +194,6 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   assert.deepEqual(events.filter(e => e !== 'slt-read-track'), ['adPlaying', 'trackChanged']);
 }
 
-// lrclib: 로마자 아티스트명이면 MusicBrainz 원어 이름으로 다시 검색, 아티스트별 캐시
 {
   const searched = [];
   let mbCalls = 0;
@@ -216,15 +204,15 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
       mbCalls++;
       return json({ artists: [
         { name: 'Yutaka Ozaki Tribute', aliases: [] },
-        { name: '尾崎紀世彦', aliases: [{ name: 'Kiyohiko Ozaki' }] }, // 이름이 안 맞음 -> 제외
-        { name: '尾崎豊', aliases: [{ name: 'yutaka ozaki' }, { name: '”öè–L' }] } // 깨진 라틴 별칭 -> 제외
+        { name: '尾崎紀世彦', aliases: [{ name: 'Kiyohiko Ozaki' }] },
+        { name: '尾崎豊', aliases: [{ name: 'yutaka ozaki' }, { name: '”öè–L' }] }
       ] });
     }
     if (u.pathname === '/api/get') return json(null, 404);
     if (u.pathname === '/api/search') {
       const a = u.searchParams.get('artist_name');
       searched.push(a ?? `q:${u.searchParams.get('q')}`);
-      return json(a === '尾崎豊' && u.searchParams.get('track_name') === '愛の消えた街' ? [{ trackName: '愛の消えた街', duration: 284, syncedLyrics: '[00:01]native' }] : []);
+      return json(a === '尾崎豊' && u.searchParams.get('track_name') === '愛の消えた街' ? [{ trackName: '愛の消えた街', artistName: '尾崎豊', duration: 284, syncedLyrics: '[00:01]native' }] : []);
     }
     return json(null, 404);
   };
@@ -236,17 +224,16 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   assert.equal(mbCalls, 1, '같은 아티스트는 다시 조회하지 않는다');
   searched.length = 0;
   r = await fetchLyrics({ ...track, artist: '尾崎豊', title: 'none' });
-  assert.equal(mbCalls, 1, '이미 원어면 MusicBrainz 를 부르지 않는다');
-  assert.deepEqual(searched, ['尾崎豊', 'q:none']);
+  assert.equal(mbCalls, 2, '원어 이름도 로마자 별칭을 찾는다');
+  assert.deepEqual(searched, ['尾崎豊', 'yutaka ozaki', '”öè–L', 'q:none']);
 }
 
-// lrclib: 라이브 버전(전각 괄호)이면 길이 다른 원곡 가사를 싱크 없이 쓴다. 버전 표기 없는 제목엔 안 씀
 {
-  const studio = { trackName: '夏の終りのハーモニー', duration: 263, syncedLyrics: '[00:10]studio line\n[00:12]' };
+  const studio = { trackName: '夏の終りのハーモニー', artistName: '玉置浩二', duration: 263, syncedLyrics: '[00:10]studio line\n[00:12]' };
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
   globalThis.fetch = async (url) => {
     const u = new URL(String(url));
-    if (u.host === 'musicbrainz.org') return json({ artists: [] });
+    if (u.host === 'musicbrainz.org') return json({ artists: [{ name: '玉置浩二', aliases: [{ name: 'Koji Tamaki' }] }] });
     if (u.pathname === '/api/search' && u.searchParams.get('q') === '夏の終りのハーモニー') return json([studio]);
     if (u.pathname === '/api/search') return json([]);
     return json(null, 404);
@@ -254,24 +241,12 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   const live = { title: '夏の終りのハーモニー（2005LIVE）', artist: 'Koji Tamaki', album: '', durationMs: 330000 };
   r = await fetchLyrics(live);
   assert.deepEqual(r, { lines: [{ startTimeMs: 0, text: 'studio line' }], synced: false, source: 'lrclib' });
-  assert.equal(await fetchLyrics({ ...live, title: '夏の終りのハーモニー' }), null, '버전 표기 없으면 다른 아티스트 레코드 안 씀');
-
-  // 제목만 같은 다른 곡이 섞이면 (첫 줄 불일치) 포기
-  const other = { trackName: '夏の終りのハーモニー', duration: 200, plainLyrics: 'different song' };
-  const base = globalThis.fetch;
-  globalThis.fetch = async (url) => {
-    const u = new URL(String(url));
-    if (u.searchParams.get('q') === '夏の終りのハーモニー') return json([studio, other]);
-    return base(url);
-  };
-  assert.equal(await fetchLyrics(live), null, '첫 줄이 다르면 같은 곡이라는 근거 없음');
-  globalThis.fetch = base;
+  assert.equal(await fetchLyrics({ ...live, artist: 'Someone Else' }), null, '다른 아티스트의 같은 제목 레코드는 쓰지 않는다');
 }
 
-// lrclib 검색은 부분 일치: 제목이 정확히 같지 않은 레코드는 길이가 맞아도 쓰지 않는다 ("연애" vs "나 그거하나봐 연애")
 {
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
-  const rec = (trackName, text) => ({ trackName, artistName: 'x', duration: 236, syncedLyrics: `[00:01]${text}` });
+  const rec = (trackName, text) => ({ trackName, artistName: '단편선 순간들', duration: 236, syncedLyrics: `[00:01]${text}` });
   let results = [rec('나 그거하나봐 연애', 'wrong')];
   globalThis.fetch = async (url) => {
     const u = new URL(String(url));
@@ -283,11 +258,14 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   assert.equal(await fetchLyrics(track), null, '제목만 부분 일치하는 곡은 쓰지 않는다');
   results = [rec('나 그거하나봐 연애', 'wrong'), rec('연애 (feat. 이서영)', 'right')];
   assert.equal((await fetchLyrics(track)).lines[0].text, 'right', '제목이 같은 레코드는 feat 꼬리가 달려도 쓴다');
+  results = [rec('Romance (연애)', 'bilingual')];
+  assert.equal((await fetchLyrics(track)).lines[0].text, 'bilingual', '괄호 안 다른 언어 제목도 같은 제목');
+  results = [rec('Prologue (연애)', 'bilingual'), rec('Other (Romance)', 'x')];
+  assert.equal(await fetchLyrics({ ...track, title: 'Romance' }), null, '같은 문자의 괄호 제목은 다른 곡');
   results = [rec('연  애', 'spaced')];
   assert.equal((await fetchLyrics(track)).lines[0].text, 'spaced', '공백 차이는 무시한다');
 }
 
-// 버전 표기 판별: 단어 경계 ("(Olive)" 는 지우지 않음)
 {
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
   const seen = [];
@@ -303,7 +281,6 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   }
 }
 
-// lrclib 503 (DB 에 없는 곡을 밖에서 찾다가 바쁨): 한 번 재시도, 실패한 단계는 건너뛰고 다음 단계로
 {
   const busy = { ok: false, status: 503, headers: { get: () => '0.01' } };
   const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
@@ -315,7 +292,7 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
     if (u.host === 'musicbrainz.org') return json({ artists: [] });
     if (step === '/api/get') return hits[step] === 1 ? busy : json(null, 404);
     if (step === '/api/search') return busy;
-    if (step === '/api/search?q') return json([{ trackName: 'Indie', duration: 200, syncedLyrics: '[00:01]found' }]);
+    if (step === '/api/search?q') return json([{ trackName: 'Indie', artistName: 'Nobody', duration: 200, syncedLyrics: '[00:01]found' }]);
     return json(null, 404);
   };
   r = await fetchLyrics({ title: 'Indie', artist: 'Nobody', album: '', durationMs: 200000 });
@@ -328,7 +305,6 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
     { message: 'errLyricsServer' }, '"HTTP 503" 을 화면에 그대로 내보내지 않는다');
 }
 
-// 벅스: 검색 HTML 파싱, 싱크 가사 형식, 같은 제목 다른 곡은 길이로 거른다
 {
   const row = (id, title, artist, album) => `<tr albumId="1" artistId="2" trackId="${id}" multiArtist="N" rowType="track" >
     <th scope="row"><p class="title" adult_yn="N"><a href="javascript:;" title="${title}" aria-label="새창">${title}</a></p></th>
@@ -374,13 +350,14 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   r = await fetchLyrics({ title: '하얀 섬', artist: '이희상', album: '', durationMs: 0 });
   assert.equal(r?.source, 'bugs', '길이를 모르면 아티스트 이름이 같을 때만');
 
-  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 }), null, '아티스트·앨범이 안 맞으면 길이가 맞아도 쓰지 않는다');
+  r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: '', durationMs: 116000 });
+  assert.equal(r?.lines[0].text, '하얀 섬', '로마자 표기 아티스트는 길이가 맞으면 한글 이름과 같은 사람으로 본다');
+  assert.equal(await fetchLyrics({ title: '하얀 섬', artist: 'Kim Gun Mo', album: '', durationMs: 116000 }), null, '아티스트·앨범이 안 맞으면 길이가 맞아도 쓰지 않는다');
   lengths[34029104] = 'PT1M57S';
   r = await fetchLyrics({ title: '하얀 섬', artist: 'LEEHEESANG', album: 'WHOEVER', durationMs: 116000 });
   assert.equal(r?.lines[0].text, '하얀 섬', '앨범이 맞으면 길이 같은 다른 곡이 있어도 고른다');
 }
 
-// 벅스: 첫 요청 429 (쿠키 발급) 는 한 번 재시도, 흔한 제목은 아티스트를 붙여 검색, 없으면 제목만으로 다시
 {
   const row = (id, title, artist, album) => `<tr trackId="${id}" rowType="track"><p class="title"><a title="${title}">${title}</a></p>
     <p class="artist"><a title="${artist}">${artist}</a></p><a class="album" title="${album}">${album}</a></tr>`;
@@ -409,6 +386,65 @@ for (const file of ['background/service-worker.js', 'lyrics/lrclib.js', 'lyrics/
   searches.length = 0;
   assert.equal(await fetchLyrics({ ...track, artist: 'Nobody', album: '' }), null, '아티스트 검색이 비면 제목만으로 다시 찾되 안 맞으면 포기');
   assert.deepEqual(searches, ['연애 Nobody', '연애']);
+}
+
+{
+  const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body, text: async () => '' });
+  const hendrix = { trackName: 'Manic Depression', artistName: 'Jimi Hendrix', duration: 222, syncedLyrics: '[00:01]wrong' };
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    if (u.host === 'musicbrainz.org') return json({ artists: [] });
+    if (u.pathname === '/api/get') return json(hendrix);
+    if (u.pathname === '/api/search') return json([hendrix]);
+    return json(null, 404);
+  };
+  assert.equal(await fetchLyrics({ title: 'Manic Depression', artist: 'Sultan of the Disco', album: '', durationMs: 222000 }), null,
+    '제목과 길이가 같아도 아티스트가 다르면 쓰지 않는다');
+  r = await fetchLyrics({ title: 'Manic Depression', artist: 'The Jimi Hendrix', album: '', durationMs: 222000 });
+  assert.equal(r?.lines[0].text, 'wrong', '앞의 The 는 무시한다');
+  assert.ok(sameArtist('Hollywood Vampires,Alice Cooper,Johnny Depp', ['Alice Cooper']));
+  assert.ok(sameArtist('Seal & Jeff Beck', ['Jeff Beck']));
+  assert.ok(sameArtist('A feat. B', ['b']));
+  assert.ok(!sameArtist('Jimi Hendrix', ['Hendrix']));
+  assert.ok(!sameArtist('', ['x']));
+}
+
+{
+  const m = (a, b) => artistMatch(a, [b]);
+  for (const [a, b] of [['이희상', 'LEEHEESANG'], ['김광석', 'Kim Kwang Seok'], ['박효신', 'Park Hyo Shin'], ['정승환', 'Jung Seung Hwan'],
+    ['최유리', 'Choi Yu Ree'], ['윤하', 'Younha'], ['이문세', 'Lee Moon Sae'], ['장범준', 'Jang Beom June'], ['백예린', 'Yerin Baek'],
+    ['あいみょん', 'Aimyon'], ['ヨルシカ', 'Yorushika'], ['キタニタツヤ', 'Tatsuya Kitani'], ['Kouji Tamaki', 'Koji Tamaki'], ['Ozaki Yutaka', 'Yutaka Ozaki']]) {
+    assert.equal(m(a, b), ARTIST_SOUNDS_LIKE, `${a} = ${b}`);
+  }
+  assert.equal(m('Kōji Tamaki', 'Koji Tamaki'), ARTIST_EXACT);
+  assert.equal(m('아이유(IU)', 'IU'), ARTIST_EXACT);
+  for (const [a, b] of [['김광석', 'Kim Gun Mo'], ['Seal', 'Sill'], ['尾崎豊', 'Yutaka Ozaki'], ['Jimi Hendrix', 'Sultan of the Disco']]) {
+    assert.equal(m(a, b), 0, `${a} != ${b}`);
+  }
+
+  const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+  const record = (artistName, duration) => ({ trackName: '暁', artistName, duration, syncedLyrics: '[00:01]right' });
+  let results = [];
+  const mbQueries = [];
+  globalThis.fetch = async (url) => {
+    const u = new URL(String(url));
+    if (u.host === 'musicbrainz.org') {
+      mbQueries.push(u.searchParams.get('query'));
+      return json({ artists: u.searchParams.get('query').includes('葛城ミナ') ? [{ name: '葛城ミナ', 'sort-name': 'Katsuragi, Mina', aliases: [{ name: 'Mina Katsuragi' }] }] : [] });
+    }
+    if (u.pathname === '/api/search') return json(results);
+    return json(null, 404);
+  };
+  const track = { title: '暁', artist: 'Mina Katsuragi', album: '', durationMs: 200000 };
+  results = [record('葛城ミナ', 260)];
+  assert.equal((await fetchLyrics(track))?.lines[0].text, 'right', '한자 아티스트는 MusicBrainz 별칭이 우리 이름과 같으면 같은 사람');
+  assert.ok(mbQueries.some(q => q.includes('葛城ミナ')), '레코드 아티스트를 역으로 조회한다');
+  results = [record('別人', 200)];
+  assert.equal(await fetchLyrics(track), null, '별칭이 안 맞는 한자 아티스트는 길이가 같아도 쓰지 않는다');
+  results = [{ trackName: '暁', artistName: 'みな かつらぎ', duration: 260, syncedLyrics: '[00:01]x' }];
+  assert.equal(await fetchLyrics(track), null, '발음만 같은 이름은 길이가 다르면 쓰지 않는다');
+  results[0].duration = 201;
+  assert.equal((await fetchLyrics(track))?.lines[0].text, 'x', '발음만 같은 이름은 길이가 맞으면 쓴다');
 }
 
 console.log('selfcheck ok');

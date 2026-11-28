@@ -1,6 +1,6 @@
-// 가사 소스들이 같이 쓰는 HTTP 도우미
+// HTTP helpers shared by the lyrics sources.
 
-// 8초 안에 응답과 본문 읽기를 끝낸다. 본문은 성공(ok)일 때만 readBody 로 읽고, 아니면 null
+// Finish the response and body read within 8 seconds. The body is read with readBody only when ok; otherwise it is null.
 async function fetchWithTimeout(url, init, readBody) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
@@ -12,10 +12,20 @@ async function fetchWithTimeout(url, init, readBody) {
   }
 }
 
-// 서버가 바쁘면 retry-after 초만큼 (최대 maxSec) 기다린다. 헤더가 없으면 1초
 async function waitRetryAfter(res, maxSec) {
   const wait = Math.min(Number(res.headers?.get('retry-after')) || 1, maxSec);
   await new Promise(r => setTimeout(r, wait * 1000));
 }
 
-export { fetchWithTimeout, waitRetryAfter };
+async function fetchJson(url, headers = {}, retry = true) {
+  const { res, body } = await fetchWithTimeout(url, { headers }, r => r.json());
+  if (res.ok) return body;
+  if (res.status === 404) return null;
+  if (res.status === 503 && retry) {
+    await waitRetryAfter(res, 3);
+    return fetchJson(url, headers, false);
+  }
+  throw new Error(`HTTP ${res.status}`);
+}
+
+export { fetchJson, fetchWithTimeout, waitRetryAfter };

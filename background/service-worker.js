@@ -1,10 +1,10 @@
-import { fetchLyrics } from '../lyrics/lrclib.js';
+import { fetchLyrics } from '../lyrics/index.js';
 import { translateLines as deepl } from '../translate/deepl.js';
 import { translateLines as claude } from '../translate/claude.js';
 import { isTranslatable, hasScriptCheck } from '../translate/style.js';
 import { t } from '../i18n.js';
 
-// 엔진별 번역 방식 버전. 올린 엔진의 캐시만 다시 번역한다 (deepl v3: 줄 묶음 번역)
+// Per-engine translation scheme version. Bumping an engine retranslates only that engine's cache.
 const CACHE_VERSION = { deepl: 'v3', claude: 'v2' };
 const DEFAULTS = {
   engine: 'deepl',
@@ -15,7 +15,6 @@ const DEFAULTS = {
   preferSpotify: true
 };
 
-// API 키는 기기 간 동기화되지 않도록 storage.local 에 둔다. (v1은 sync 에 저장했으므로 한 번 옮김)
 async function getSettings() {
   const [sync, local] = await Promise.all([
     chrome.storage.sync.get({ ...DEFAULTS, deeplApiKey: '' }),
@@ -46,9 +45,9 @@ async function resolveLyrics(track, spotify, preferSpotify) {
 }
 
 const inFlight = new Map();
-const recentCalls = new Map(); // tabId -> 번역 API 호출 시각들
+const recentCalls = new Map();
 
-// 페이지(open.spotify.com)에서 온 값은 신뢰하지 않는다: 타입·길이 제한해서 새 객체로 만든다
+// Values from the page (open.spotify.com) are untrusted: copy them into a new object with type and length limits.
 function str(v, max = 300) {
   return typeof v === 'string' ? v.slice(0, max) : '';
 }
@@ -66,7 +65,6 @@ function sanitizeSpotify(e) {
   };
 }
 
-// ponytail: 탭당 10분에 20곡까지. 페이지 스크립트가 버튼을 연타해도 키 사용량이 터지지 않게 하는 상한.
 function allowTranslation(tabId) {
   const now = Date.now();
   const calls = (recentCalls.get(tabId) || []).filter(t => now - t < 10 * 60 * 1000);
@@ -94,11 +92,9 @@ async function handle({ track, spotify, force }, tabId, settings) {
   if (!force) {
     const cached = (await chrome.storage.local.get(cacheKey))[cacheKey];
     const betterSourceNow = cached && !cached.synced && isSyncedSpotify(spotify) && settings.preferSpotify;
-    // 줄 단위 판별 전 캐시는 Spotify 언어가 같으면 곡 전체를 건너뛰었다 -> 번역이 빠진 줄이 있으면 다시 만든다
     const missingLines = cached && hasScriptCheck(settings.targetLang) &&
       cached.lines.some(l => !l.translated && isTranslatable(l.text, settings.targetLang));
     if (cached && !betterSourceNow && !missingLines) {
-      // v2.0 캐시에는 제목 번역이 없다 -> 제목만 한 번 번역해서 채워 둔다
       if (cached.titleTranslated === undefined) {
         cached.titleTranslated = (await translate([{ startTimeMs: 0, text: track.title }]).catch(() => null))?.translations[0] ?? '';
         await chrome.storage.local.set({ [cacheKey]: cached });
@@ -115,9 +111,9 @@ async function handle({ track, spotify, force }, tabId, settings) {
   const lyrics = await resolveLyrics(track, spotify, settings.preferSpotify);
   if (!lyrics) return { error: 'NO_LYRICS' };
 
-  // 제목은 마지막 한 줄로 같이 보낸다 (요청 하나로 끝낸다). standalone: 마지막 소절과 한 문장으로 묶지 않게
+  // The title goes out as the last line of the same request. standalone: never merged into one sentence with the last verse.
   const toSend = [...lyrics.lines, { startTimeMs: 0, text: track.title, standalone: true }];
-  // KO/JA 는 줄마다 문자로 판별한다 (섞인 영어 줄은 번역). 판별 못 하는 언어만 Spotify 언어로 곡 전체를 건너뜀
+  // KO/JA are checked per line by script (mixed English lines get translated). Only languages without a script check skip the whole song by Spotify language.
   const sameLang = !hasScriptCheck(settings.targetLang) &&
     !!lyrics.language && lyrics.language.toUpperCase() === settings.targetLang.split('-')[0];
   const needsTranslation = !sameLang && toSend.some(l => isTranslatable(l.text, settings.targetLang));
@@ -148,8 +144,7 @@ async function dispatch(msg, tabId) {
   const req = { track: sanitizeTrack(msg.track), spotify: sanitizeSpotify(msg.spotify), force: !!msg.force };
   if (!req.track.title) return { error: t('errNoTrack') };
 
-  // 같은 요청(자동 번역 + 버튼 연타)은 하나로 합친다. 설정·가사 입력·API 키가 다르면 별개 작업.
-  // (키를 바꾼 직후 재번역이 이전 키로 도는 작업에 합쳐지지 않게. 메모리 안의 Map 키라 밖으로 나가지 않음)
+  // Identical requests share one job. Different settings, lyrics input, or API key make separate jobs.
   const key = JSON.stringify([tabId, req.track, req.force, req.spotify,
     settings.engine, settings.claudeModel, settings.targetLang, settings.register, settings.preferSpotify,
     settings.engine === 'claude' ? settings.claudeApiKey : settings.deeplApiKey]);
