@@ -37,7 +37,6 @@ async function translateLines(lines, { targetLang = 'KO', register = 'casual', a
   const items = lines.map((l, i) => ({ i, text: l.text })).filter(x => isTranslatable(x.text, targetLang));
   if (!items.length) return { translations: lines.map(() => ''), complete: true };
   const wanted = new Set(items.map(x => x.i));
-  // 이미 대상 언어인 줄은 번호 없이 문맥으로만 보낸다
   const content = lines
     .map((l, i) => (wanted.has(i) ? `${i}\t${l.text}` : isTranslatable(l.text) ? `-\t${l.text}` : ''))
     .filter(Boolean)

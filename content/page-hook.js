@@ -1,6 +1,6 @@
 // MAIN world, document_start.
-// Spotify 웹 플레이어가 직접 받아오는 color-lyrics 응답을 엿들어 isolated world로 넘긴다.
-// 토큰을 다루거나 요청을 새로 만들지 않는다 - 페이지가 이미 받은 응답만 복제해서 읽는다.
+// Eavesdrops on the color-lyrics response the Spotify web player already fetches and forwards it to the isolated world.
+// Never handles tokens or issues requests: it only reads a clone of a response the page already received.
 (() => {
   const LYRICS_RE = /\/color-lyrics\/v2\/track\/([A-Za-z0-9]{22})(?:\/image\/([^/?]+))?/;
   const MAX_BUFFER = 20;
@@ -52,14 +52,14 @@
     return promise;
   };
 
-  // 현재 곡 trackId 는 DOM 속성에 없고 now-playing 위젯의 React props(uri)에만 있다 (실측 2026-10).
-  // isolated world 는 React 내부 값을 못 읽으므로, 요청 이벤트를 받으면 html 속성에 써 준다.
-  // CustomEvent 는 동기로 전달돼서 isolated world 가 dispatch 직후 바로 읽을 수 있다.
+  // The current trackId is not in a DOM attribute; it only exists in the React props (uri) of the now-playing widget.
+  // The isolated world cannot read React internals, so on a request event this writes it to an html attribute.
+  // CustomEvent dispatch is synchronous, so the isolated world can read the attribute right after dispatching.
   function currentTrackId() {
     const widget = document.querySelector('[data-testid^="now-playing-widget"]');
     const link = widget?.querySelector('a[href*="/album/"], a[href*="/track/"]');
     const key = link && Object.keys(link).find(k => k.startsWith('__reactFiber$'));
-    // 위젯 안쪽(링크 -> 위젯 사이)만 본다: 바깥으로 나가면 다른 곡 uri 를 집을 수 있다
+    // Look only inside the widget (link -> widget): going outside can pick up another track's uri.
     for (let f = key && link[key], i = 0; f && i < 40; f = f.return, i++) {
       const uri = f.memoizedProps?.uri;
       if (typeof uri === 'string' && /^spotify:track:[A-Za-z0-9]{22}$/.test(uri)) return uri.slice(14);

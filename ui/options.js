@@ -1,6 +1,6 @@
-// 옵션 페이지: 바꾸는 즉시 저장한다 (Chrome 옵션 관례. 닫을 때 잃어버리지 않게)
+// Options page: changes are saved immediately.
 const $ = (id) => document.getElementById(id);
-const t = (key, ...subs) => chrome.i18n.getMessage(key, subs.map(String)) || key; // 문구: _locales/*/messages.json
+const t = (key, ...subs) => chrome.i18n.getMessage(key, subs.map(String)) || key;
 document.querySelectorAll('[data-i18n]').forEach(n => { n.textContent = t(n.dataset.i18n); });
 
 const SYNC_DEFAULTS = {
@@ -17,7 +17,6 @@ function cleanKey(value) {
   return value.replace(/[​-‍⁠﻿]/g, '').trim();
 }
 
-// 바꾼 컨트롤이 속한 섹션 제목 옆에 "저장됨"을 잠깐 보여준다
 const savedTimers = new WeakMap();
 function flashSaved(control, text = t('savedShort')) {
   const badge = control.closest('section').querySelector('.saved');
@@ -40,7 +39,7 @@ Promise.all([
   s.engine = s.engine === 'claude' ? 'claude' : 'deepl';
   $(`engine-${s.engine}`).checked = true;
   $(`reg-${s.register === 'polite' ? 'polite' : 'casual'}`).checked = true;
-  $('deeplKey').value = l.deeplApiKey || s.deeplApiKey; // v1은 sync 에 저장했음
+  $('deeplKey').value = l.deeplApiKey || s.deeplApiKey;
   $('claudeKey').value = l.claudeApiKey;
   $('claudeModel').value = s.claudeModel;
   $('targetLang').value = s.targetLang;
@@ -49,7 +48,6 @@ Promise.all([
   showEngine(s.engine);
 });
 
-// 일반 설정: 바뀐 항목 하나만 sync 에 쓴다
 const syncFields = [
   ['input[name="engine"]', 'engine', el => el.value],
   ['input[name="register"]', 'register', el => el.value],
@@ -66,7 +64,7 @@ for (const [selector, key, read] of syncFields) {
   }));
 }
 
-// API 키: 입력 중에는 저장하지 않는다 (반쪽 키로 번역 요청이 나가지 않게). change = 포커스가 빠질 때
+// API key: not saved while typing (so no request goes out with a half-typed key). change = when focus leaves.
 for (const [id, key] of [['deeplKey', 'deeplApiKey'], ['claudeKey', 'claudeApiKey']]) {
   const input = $(id);
   const error = $(`${id}-error`);
@@ -84,7 +82,7 @@ for (const [id, key] of [['deeplKey', 'deeplApiKey'], ['claudeKey', 'claudeApiKe
   });
 }
 
-// ── 번역 캐시 (서비스 워커가 'v2|...', 'v3|...' 처럼 엔진별 버전 키로 저장. 'lyrics::' 는 v1 캐시) ──
+// Translation cache: the service worker stores it under per-engine version keys ('v3|...').
 const isCacheKey = (k) => /^v\d+\|/.test(k) || k.startsWith('lyrics::');
 
 async function cacheKeys() {
@@ -102,7 +100,6 @@ async function refreshCacheInfo() {
 let confirmTimer = null;
 $('cache-clear').addEventListener('click', async () => {
   const btn = $('cache-clear');
-  // 실수로 지우지 않게 두 번 눌러야 삭제 (화면 낭독기 사용자도 따라올 수 있게 5초)
   if (!btn.classList.contains('confirm')) {
     btn.classList.add('confirm');
     btn.textContent = t('cacheConfirm');
@@ -112,7 +109,7 @@ $('cache-clear').addEventListener('click', async () => {
   clearTimeout(confirmTimer);
   btn.classList.remove('confirm');
   btn.textContent = t('cacheClear');
-  await chrome.storage.local.remove(await cacheKeys()); // API 키·패널 위치는 그대로
+  await chrome.storage.local.remove(await cacheKeys());
   await refreshCacheInfo();
   flashSaved(btn, t('cacheCleared'));
 });

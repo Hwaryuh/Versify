@@ -1,9 +1,9 @@
-// Spotify 자체 가사 화면([data-testid="lyrics-line"]) 각 줄 아래에 번역을 끼워 넣는다.
-// panel.js 가 'sltTranslations' 이벤트로 번역 결과를 넘겨준다. 줄 매칭은 원문 텍스트 기준이라 가사 출처와 무관.
+// Inserts the translation under each line of Spotify's own lyrics view ([data-testid="lyrics-line"]).
+// panel.js passes the translations via the 'sltTranslations' event. Lines are matched by source text, so the lyrics origin does not matter.
 (() => {
   const CLS = 'slt-native-tr';
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  let map = new Map(); // 정규화된 원문 -> 번역
+  let map = new Map();
   let lang = '';
   let scheduled = false;
 
@@ -51,7 +51,6 @@
     schedule();
   });
 
-  // 가사 화면을 열거나 React가 줄을 다시 그리면 다시 붙인다 (번역이 있을 때만 일함)
   new MutationObserver(() => {
     if (map.size) schedule();
   }).observe(document.body, { childList: true, subtree: true });

@@ -1,7 +1,7 @@
-// 실제 DeepL API로 translate/deepl.js 를 검증한다 (키 필요, 무료 사용량 약 300자 소모).
-//   키 위치: 환경변수 DEEPL_API_KEY 또는 프로젝트 루트의 .env.local 의 DEEPL_API_KEY=...
-//   실행:    node tests/live-deepl.mjs
-// 키는 출력하지 않는다. 테스트 문장은 직접 쓴 예문 (가사 아님).
+// Verifies translate/deepl.js against the real DeepL API (needs a key, uses about 300 characters of free quota).
+//   Key: env var DEEPL_API_KEY, or DEEPL_API_KEY=... in .env.local at the project root
+//   Run: node tests/live-deepl.mjs
+// The key is never printed. The test sentences are hand-written examples (not lyrics).
 import { readFileSync } from 'node:fs';
 import { translateLines } from '../translate/deepl.js';
 
@@ -21,7 +21,6 @@ if (!apiKey) {
   process.exit(1);
 }
 
-// 요청마다 상태 코드와 지시문 포함 여부만 기록
 const nativeFetch = globalThis.fetch;
 const log = [];
 globalThis.fetch = async (url, init) => {
@@ -31,7 +30,6 @@ globalThis.fetch = async (url, init) => {
   return res;
 };
 
-// 한 문장이 두 줄에 걸친 예문 + 반복 줄
 const lines = [
   'When the city lights go quiet',
   'and the last train leaves without me,',

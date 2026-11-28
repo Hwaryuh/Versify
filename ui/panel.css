@@ -13,11 +13,11 @@
   --slt-skeleton: #242424;
   --slt-skeleton-hi: #333333;
   --slt-scrollbar: #4d4d4d;
-  /* 줄 상태별 색 (불투명도 대신 색으로 흐리게 해서 흐린 줄도 4.5:1 이상 유지) */
-  --slt-line-future: #8f8f8f;        /* 5.8:1 */
-  --slt-line-future-sub: #808080;    /* 4.7:1 */
-  --slt-line-past: #bdbdbd;          /* 10:1 */
-  --slt-line-past-sub: #8f8f8f;      /* 5.8:1 */
+  /* Line state colors (dim with color, not opacity, so dimmed lines keep at least 4.5:1 contrast) */
+  --slt-line-future: #8f8f8f;
+  --slt-line-future-sub: #808080;
+  --slt-line-past: #bdbdbd;
+  --slt-line-past-sub: #8f8f8f;
   --slt-ease: cubic-bezier(0.16, 1, 0.3, 1);
   font-family: inherit;
   -webkit-font-smoothing: antialiased;
@@ -37,7 +37,6 @@
 
 #slt-panel ::selection { background: rgba(30, 215, 96, 0.35); color: var(--slt-text); }
 
-/* ── panel: 기본은 Spotify 오른쪽 사이드바 위치에 도킹 (JS가 사이드바 rect로 top/left/width/height 지정) ── */
 #slt-panel {
   position: fixed;
   z-index: 40;
@@ -60,7 +59,6 @@
 #slt-panel[hidden],
 #slt-reopen[hidden] { display: none; }
 
-/* ── header ── */
 #slt-header {
   display: flex;
   align-items: center;
@@ -69,7 +67,7 @@
   flex-shrink: 0;
   cursor: grab;
   user-select: none;
-  touch-action: none; /* 터치 드래그가 페이지 스크롤로 새지 않게 */
+  touch-action: none;
 }
 
 #slt-header:active { cursor: grabbing; }
@@ -111,32 +109,28 @@
 .slt-icon-btn svg { width: 16px; height: 16px; fill: currentColor; }
 
 
-/* ── lyrics list ── */
 #slt-body { position: relative; flex: 1; min-height: 0; }
 
 #slt-lyrics {
-  position: relative; /* 라인 offsetTop 기준 */
+  position: relative;
   height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 8px 16px;
-  /* 위아래 가장자리에서 줄이 잘리지 않고 스며들듯 사라지게 */
   mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 32px), transparent 100%);
   scrollbar-width: thin;
   scrollbar-color: var(--slt-scrollbar) transparent;
   overscroll-behavior: contain;
 }
 
-/* 위는 일반 여백: 첫 줄들은 맨 위에서 시작하고, 현재 줄이 40% 지점을 지나면 거기 고정된다.
-   아래만 크게 둬서 마지막 줄까지 40% 지점으로 올라올 수 있게 한다. (padding % 는 폭 기준이라 vh 사용) */
 #slt-lyrics[data-synced="true"] { padding-bottom: 60vh; }
 
 .slt-line {
   --line-main: var(--slt-line-future);
   --line-sub: var(--slt-line-future-sub);
   padding: 8px 0;
-  word-break: keep-all;    /* 한국어를 음절이 아닌 어절 단위로 줄바꿈 */
-  overflow-wrap: anywhere; /* 띄어쓰기 없는 긴 단어 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
   border-radius: 4px;
   outline-offset: 4px;
 }
@@ -179,7 +173,6 @@
   transition: color 0.3s var(--slt-ease);
 }
 
-/* 번역이 없으면 (같은 언어/누락) 원문을 주 텍스트로 */
 .slt-line[data-only-original] .slt-original {
   font-size: 18px;
   font-weight: 700;
@@ -205,7 +198,6 @@
 
 @keyframes slt-shimmer { to { background-position: -200% 0; } }
 
-/* ── states ── */
 .slt-state {
   display: flex;
   flex-direction: column;
@@ -259,7 +251,6 @@
 
 #slt-follow[hidden] { display: none; }
 
-/* ── collapsed pill ── */
 #slt-reopen {
   position: fixed;
   right: 16px;
@@ -287,7 +278,6 @@
   #slt-reopen { transition: none !important; animation: none !important; }
 }
 
-/* ── Spotify 자체 가사 화면에 끼워 넣는 번역 (색은 Spotify 줄 상태를 그대로 따름) ── */
 .slt-native-tr {
   margin-top: 0.2em;
   font-size: 0.62em;

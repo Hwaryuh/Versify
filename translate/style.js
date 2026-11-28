@@ -4,9 +4,8 @@ const HANGUL_RE = /\p{Script=Hangul}/u;
 const KANA_RE = /[\p{Script=Hiragana}\p{Script=Katakana}ー]/u;
 const HAN_RE = /\p{Script=Han}/u;
 
-// 글자의 절반 넘게 대상 언어 문자면 이미 그 언어로 쓰인 줄로 본다 (LRCLIB 가사엔 언어 정보가 없다).
-// "Baby 너만 보여" 처럼 반반이거나 영어가 더 많은 줄은 번역한다.
-// ZH 는 번체·일본어 한자와, EN 은 다른 라틴 문자 언어와 구분이 안 돼서 판별하지 않는다.
+// A line is treated as already written in the target language when more than half of its letters are in that script (LRCLIB lyrics carry no language info).
+// Mixed lines like "Baby 너만 보여", or lines with more English, get translated.
 const SCRIPT_CHECKS = {
   KO: (letters, count) => count(HANGUL_RE) * 2 > letters.length,
   JA: (letters, count) => count(KANA_RE) > 0 && (count(KANA_RE) + count(HAN_RE)) * 2 > letters.length
@@ -29,7 +28,6 @@ function isTranslatable(text, targetLang) {
 
 const LANG_NAMES = { KO: 'Korean', JA: 'Japanese', ZH: 'Chinese (Simplified)', 'EN-US': 'English' };
 
-// register: 'casual' | 'polite'
 function registerRule(targetLang, register) {
   const lang = targetLang.split('-')[0];
   if (lang === 'KO') {

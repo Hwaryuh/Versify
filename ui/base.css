@@ -1,10 +1,10 @@
-/* 팝업·옵션 공용. Spotify 위에 뜨는 도구라 어디서나 같은 다크 */
+/* Shared by popup and options. A tool floating over Spotify, so the same dark theme everywhere. */
 :root {
   color-scheme: dark;
   --bg: #121212;
   --field: #242424;
-  --line: #727272;      /* 경계선: #121212 대비 3.9:1, #242424 대비 3.2:1 */
-  --divider: #2e2e2e;   /* 장식용 구분선 (컨트롤 경계 아님) */
+  --line: #727272;
+  --divider: #2e2e2e;
   --text: #fff;
   --sub: #a7a7a7;
   --placeholder: #929292;

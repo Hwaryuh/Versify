@@ -39,7 +39,7 @@
 
   function iconButton(name, label, onclick) {
     const btn = el('button', { type: 'button', class: 'slt-icon-btn', 'aria-label': label, title: label, onclick });
-    btn.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${SVG[name]}</svg>`; // 고정 문자열만
+    btn.innerHTML = `<svg viewBox="0 0 16 16" aria-hidden="true">${SVG[name]}</svg>`; // fixed strings only
     return btn;
   }
 
@@ -47,7 +47,6 @@
     chrome.storage.local.set({ [UI_KEY]: ui }).catch(() => {});
   }
 
-  // ── 생성 / 배치 ─────────────────────────────────────────────
 
   function createPanel() {
     if (panel) return;
@@ -60,7 +59,7 @@
       applyUiFlags();
       saveUi();
     });
-    // 페이지 스크립트의 가짜 클릭(isTrusted=false)으로 유료 번역을 반복시키지 못하게
+    // Prevent fake clicks (isTrusted=false) from page scripts from repeating paid translations.
     els.retranslate = iconButton('refresh', t('retranslate'), (e) => e.isTrusted && requestLyrics(true));
     els.header = el('div', { id: 'slt-header', title: t('headerHint') }, [
       el('div', { id: 'slt-titles' }, [els.title, els.titleTr, els.artist]),
@@ -69,7 +68,7 @@
       iconButton('settings', t('settings'), openSettings),
       iconButton('close', t('closePanel'), () => setOpen(false))
     ]);
-    // 가사 목록 자체는 live region 이 아니다 (다시 그릴 때마다 수십 줄을 읽어 버림). 알림은 #slt-status 한 줄로만.
+    // The lyrics list itself is not a live region (re-rendering would make screen readers read dozens of lines). Announce only through the single #slt-status line.
     els.lyrics = el('div', {
       id: 'slt-lyrics', role: 'list', tabindex: '0', 'aria-busy': 'false',
       'aria-label': t('lyricsListLabel')
@@ -143,7 +142,7 @@
     panel.style.height = `${Math.round(r.height)}px`;
   }
 
-  // 기본: Spotify 오른쪽 사이드바(Now Playing) 자리에 정확히 겹쳐 도킹. 사이드바가 닫혀 있으면 우측 하단 카드.
+  // Default: docked exactly over the Spotify right sidebar (Now Playing). If the sidebar is closed, a card at the bottom right.
   function place() {
     if (!panel || panel.hidden || dragging) return;
     if (ui.floating) return setRect(clampRect(ui.floating), 'floating');
@@ -164,7 +163,6 @@
     });
     els.header.addEventListener('pointermove', (e) => {
       if (!start) return;
-      // 버튼을 뗐는데 pointerup 을 못 받은 경우(페이지가 가로챔 등) 계속 따라다니지 않게
       if (!(e.buttons & 1)) return end();
       const dx = e.clientX - start.x;
       const dy = e.clientY - start.y;
@@ -182,7 +180,6 @@
     els.header.addEventListener('pointerup', end);
     els.header.addEventListener('pointercancel', end);
     els.header.addEventListener('lostpointercapture', end);
-    // Spotify 가 pointerup 전파를 막아도 받도록 window 캡처 단계에서도 끝낸다
     window.addEventListener('pointerup', end, true);
     els.header.addEventListener('dblclick', (e) => {
       if (e.target.closest('button')) return;
@@ -203,7 +200,6 @@
     resizeSave = setTimeout(saveUi, 300);
   }
 
-  // ── 자동 스크롤 (사용자가 스크롤하면 멈추고 "현재 가사로 이동" 버튼 표시) ──
 
   function setupFollow() {
     const pause = () => {
@@ -217,7 +213,7 @@
       if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) pause();
     });
     els.lyrics.addEventListener('pointerdown', (e) => {
-      if (e.target === els.lyrics) pause(); // 스크롤바 드래그
+      if (e.target === els.lyrics) pause();
     });
   }
 
@@ -237,7 +233,6 @@
     });
   }
 
-  // ── 렌더링 ────────────────────────────────────────────────
 
   function setHeader() {
     els.title.textContent = track?.title || t('waitingForTrack');
@@ -337,7 +332,6 @@
     showState({ title: t('translateFailedTitle'), body: code, error: true, action: { label: t('retry'), run: () => requestLyrics(true) } });
   }
 
-  // 같은 문구도 다시 읽히도록 비웠다가 다음 프레임에 채운다
   function announce(text) {
     if (!els.status) return;
     els.status.textContent = '';
@@ -353,11 +347,10 @@
     showState({ body: t('idleAutoOff'), action: { label: t('translateNow'), run: () => requestLyrics(false) } });
   }
 
-  // ── 요청 ──────────────────────────────────────────────────
 
   async function requestLyrics(force) {
     const req = SLT.getTrack() || track;
-    // 광고 감지(1초 주기) 전 틈에 들어온 재번역·설정 변경도 막는다
+    // Also block retranslation and settings changes that arrive before ad detection (1s interval).
     if (!req || !panel || SLT.isAd()) return;
     track = req;
     setHeader();
@@ -370,7 +363,7 @@
     } catch (_) {
       res = { error: t('extensionUpdated') };
     }
-    // 곡 전환·광고 감지(1초 주기) 전에 도착한 이전 곡 응답도 걸러낸다
+    // Also drop responses for the previous track that arrive before track change or ad detection (1s interval).
     const now = SLT.getTrack();
     if (my === token && !SLT.isAd() && (!now || sameTrack(now, req))) render(res);
   }
@@ -399,7 +392,6 @@
     }
   });
 
-  // ── 현재 줄 강조 ───────────────────────────────────────────
 
   function findActive(lines, ms) {
     let lo = 0;
@@ -445,7 +437,6 @@
     els.follow.hidden = true;
   }
 
-  // 키보드: 위/아래로 줄 이동, Enter/Space 로 그 위치 재생
   function onLyricsKey(e) {
     const nodes = [...els.lyrics.querySelectorAll('.slt-line[data-i]')];
     if (!nodes.length) return;
@@ -461,7 +452,6 @@
     }
   }
 
-  // ── 이벤트 연결 ────────────────────────────────────────────
 
   window.addEventListener('trackChanged', (e) => {
     createPanel();
@@ -474,12 +464,11 @@
     clearTimeout(autoTimer);
     if (!settings.autoTranslate) return showIdle();
     showLoading();
-    // 곡 길이(재생바 max)와 Spotify 가사 응답이 새 곡으로 바뀔 시간을 준다
     autoTimer = setTimeout(() => requestLyrics(false), 1500);
   });
 
-  // 광고 중엔 요청하지 않는다: "광고"라는 제목으로 가사를 찾지 않고,
-  // 이전 곡 가사가 광고 재생 위치에 맞춰 강조되지 않게 비운다
+  // No requests during an ad: do not search lyrics by the title "Advertisement",
+  // and clear the previous track's lyrics so they are not highlighted against the ad's playback position.
   window.addEventListener('adPlaying', () => {
     createPanel();
     track = null;
@@ -500,7 +489,7 @@
     setOpen(!ui.open);
   });
 
-  // 설정은 바꾸는 즉시 저장되므로, 연달아 바꾸면 마지막 변경 1.5초 뒤 한 번만 다시 번역 (유료 API 호출 절약)
+  // Settings save immediately, so successive changes trigger a single retranslation 1.5s after the last one (saves paid API calls).
   let settingsTimer = null;
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'sync' && changes.autoTranslate) settings.autoTranslate = changes.autoTranslate.newValue;
@@ -522,6 +511,6 @@
     if (l[UI_KEY]) ui = { ...ui, ...l[UI_KEY] };
     applyUiFlags();
     syncVisibility();
-    SLT.checkTrack(); // 설정을 읽은 뒤 첫 곡 감지 (자동 번역 꺼짐이면 번역하지 않게)
+    SLT.checkTrack(); // first track detection after settings are read (so nothing is translated when auto-translate is off)
   });
 })();
